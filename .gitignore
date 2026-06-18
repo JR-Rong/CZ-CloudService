@@ -1,0 +1,26 @@
+# Runtime logs and generated local configs
+*.log
+frpc.toml
+frps.toml
+
+# Downloaded archives and extracted binaries
+*.zip
+*.tar.gz
+*.7z
+frp_*_windows_amd64/
+OpenSSH-Win64/
+OpenSSH-Win64.zip
+
+# Secrets and keys
+*.key
+*.pem
+id_*
+tunnel_ed25519*
+.env
+.env.*
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
