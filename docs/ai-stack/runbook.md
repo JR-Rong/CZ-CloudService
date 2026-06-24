@@ -75,7 +75,8 @@ text_http=200
 image_http=200
 ```
 
-The text test should answer `2`; the image test should answer `白色` for the built-in one-pixel sample image.
+The script fails if the text answer does not contain `2`, or if the image
+answer does not contain `白` or `white` for the built-in one-pixel sample image.
 
 ## Change Qwen3.6 Context Length
 
@@ -122,7 +123,9 @@ Use only if a change breaks the service and you want to restore a known backup d
 sudo bash scripts/ai-stack/rollback-ai-stack-backup.sh /home/ubuntu/ai-stack/backups/rebalance-20260623-225506 --apply
 ```
 
-This restores files that exist in the backup directory and restarts available AI services.
+This restores files that exist in the backup directory and restarts only AI
+services that are currently enabled. Use `--restart-disabled` only when you
+intentionally want to start a disabled service such as `ai-vlm.service`.
 
 ## Ports
 

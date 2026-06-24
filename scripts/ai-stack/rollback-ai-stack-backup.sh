@@ -2,16 +2,20 @@
 set -euo pipefail
 
 APPLY="no"
+RESTART_DISABLED="no"
 
 usage() {
   cat <<'EOF'
 Usage:
-  rollback-ai-stack-backup.sh <backup_dir> [--apply]
+  rollback-ai-stack-backup.sh <backup_dir> [--apply] [--restart-disabled]
 
 Restores AI stack files from a backup directory created under:
   /home/ubuntu/ai-stack/backups/
 
-The script is dry-run unless --apply is provided.
+The script is dry-run unless --apply is provided. In apply mode, it restarts
+only currently enabled services by default. Use --restart-disabled only when
+you intentionally want to start services that are disabled in the current
+architecture.
 EOF
 }
 
@@ -26,6 +30,7 @@ shift
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --apply) APPLY="yes" ;;
+    --restart-disabled) RESTART_DISABLED="yes" ;;
     *) echo "Unknown option: $1" >&2; usage; exit 2 ;;
   esac
   shift
@@ -74,8 +79,34 @@ restore_file ai-comfy-gpu2.service /etc/systemd/system/ai-comfy-gpu2.service 064
 if [ "$APPLY" = "yes" ]; then
   sudo systemctl daemon-reload
   for svc in ai-llm ai-vlm ai-speech ai-comfy ai-comfy-gpu2; do
-    if systemctl list-unit-files "${svc}.service" >/dev/null 2>&1; then
-      sudo systemctl restart "${svc}.service" || true
+    unit="${svc}.service"
+    if ! systemctl cat "$unit" >/dev/null 2>&1; then
+      echo "skip missing $unit"
+      continue
+    fi
+
+    enabled_state="$(systemctl is-enabled "$unit" 2>/dev/null || true)"
+    case "$enabled_state" in
+      enabled|enabled-runtime)
+        echo "restart enabled $unit"
+        sudo systemctl restart "$unit" || true
+        ;;
+      *)
+        if [ "$RESTART_DISABLED" = "yes" ]; then
+          echo "restart $unit despite enabled_state=${enabled_state:-unknown}"
+          sudo systemctl restart "$unit" || true
+        else
+          echo "skip $unit enabled_state=${enabled_state:-unknown}; use --restart-disabled to start it"
+        fi
+        ;;
+    esac
+  done
+else
+  for svc in ai-llm ai-vlm ai-speech ai-comfy ai-comfy-gpu2; do
+    if [ "$RESTART_DISABLED" = "yes" ]; then
+      echo "dry-run restart policy: would restart ${svc}.service even if disabled"
+    else
+      echo "dry-run restart policy: would restart ${svc}.service only if currently enabled"
     fi
   done
 fi

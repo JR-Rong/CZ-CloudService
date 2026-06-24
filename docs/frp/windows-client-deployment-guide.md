@@ -211,6 +211,27 @@ localPort = 22222
 remotePort = 2222
 ```
 
+自动启动选项：
+
+- `-CreateStartupShortcut`：在当前用户的 Startup 文件夹创建快捷方式。只有这个用户登录后才会启动 `frpc`。
+- `-RegisterScheduledTask -ScheduledTaskTrigger AtLogon`：为当前用户创建任务计划程序登录触发器，方便用 `Get-ScheduledTask` 检查，不改变原来的快捷方式行为。
+- `-RegisterScheduledTask -ScheduledTaskTrigger AtStartup`：创建 `SYSTEM` 启动触发器，需要管理员 PowerShell。这个模式建议把 `-InstallDir` 放到 `C:\ProgramData\CZ-CloudService\frpc` 这类 `SYSTEM` 可读目录。
+
+当前用户任务计划示例：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\setup-frpc.ps1 `
+  -AuthToken "<填 ECS /etc/frp/frps.toml 里相同的 token>" `
+  -RegisterScheduledTask `
+  -ScheduledTaskTrigger AtLogon
+```
+
+检查任务：
+
+```powershell
+Get-ScheduledTask -TaskName "CZ CloudService frpc"
+```
+
 启动：
 
 ```powershell

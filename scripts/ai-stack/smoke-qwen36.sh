@@ -56,6 +56,7 @@ text_code="$(post_json "$tmpdir/text.json" "$tmpdir/text.out")"
 echo "text_http=${text_code}"
 "$PYTHON_BIN" - "$tmpdir/text.out" <<'PY'
 import json
+import re
 import sys
 data = json.load(open(sys.argv[1]))
 if "error" in data:
@@ -65,7 +66,11 @@ choice = data.get("choices", [{}])[0]
 msg = choice.get("message", {})
 print("model=" + data.get("model", ""))
 print("finish=" + str(choice.get("finish_reason")))
-print("content=" + (msg.get("content") or "").replace("\n", " ")[:500])
+content = msg.get("content") or ""
+print("content=" + content.replace("\n", " ")[:500])
+if not re.fullmatch(r'[\s`"“”答案:：。.!！]*(2|２)[\s`"“”答案:：。.!！]*', content):
+    print("validation=failed_missing_2")
+    raise SystemExit(1)
 PY
 
 cat > "$tmpdir/image.json" <<JSON
@@ -97,5 +102,13 @@ choice = data.get("choices", [{}])[0]
 msg = choice.get("message", {})
 print("model=" + data.get("model", ""))
 print("finish=" + str(choice.get("finish_reason")))
-print("content=" + (msg.get("content") or "").replace("\n", " ")[:500])
+content = msg.get("content") or ""
+print("content=" + content.replace("\n", " ")[:500])
+normalized = content.strip().lower()
+negative_markers = ("不", "不是", "not", "not white")
+has_white = "白" in content or "white" in normalized
+has_negation = any(marker in normalized for marker in negative_markers)
+if not has_white or has_negation:
+    print("validation=failed_missing_white")
+    raise SystemExit(1)
 PY
