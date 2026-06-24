@@ -4,11 +4,15 @@ Configures a Windows frpc client for exposing local OpenSSH through an ECS frps 
 
 .DESCRIPTION
 This script downloads frpc if needed, verifies the local SSH service, writes frpc.toml,
-starts frpc, and can create a current-user startup shortcut. It intentionally requires
-the FRP auth token at runtime so secrets are not committed to the repository.
+starts frpc, and can create either a current-user startup shortcut or a Windows
+Scheduled Task. It intentionally requires the FRP auth token at runtime so secrets
+are not committed to the repository.
 
 .EXAMPLE
 powershell -ExecutionPolicy Bypass -File .\setup-frpc.ps1 -AuthToken "<token>" -CreateStartupShortcut
+
+.EXAMPLE
+powershell -ExecutionPolicy Bypass -File .\setup-frpc.ps1 -AuthToken "<token>" -RegisterScheduledTask -ScheduledTaskTrigger AtLogon
 #>
 
 [CmdletBinding()]
@@ -34,6 +38,11 @@ param(
     [switch]$SkipLocalPortCheck,
     [switch]$NoStart,
     [switch]$CreateStartupShortcut,
+    [switch]$RegisterScheduledTask,
+    [ValidateSet("AtLogon", "AtStartup")]
+    [string]$ScheduledTaskTrigger = "AtLogon",
+    [string]$ScheduledTaskName = "CZ CloudService frpc",
+    [switch]$ForceScheduledTask,
     [bool]$StopExisting = $true
 )
 
@@ -84,6 +93,29 @@ function Test-TcpPort {
     }
 }
 
+function Test-IsAdministrator {
+    $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = [System.Security.Principal.WindowsPrincipal]::new($identity)
+    return $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function New-FrpcLauncher {
+    param(
+        [string]$TargetInstallDir,
+        [string]$TargetFrpcExe,
+        [string]$TargetConfigPath
+    )
+
+    $launcherPath = Join-Path $TargetInstallDir "start-frpc.cmd"
+    $launcher = @"
+@echo off
+cd /d "$TargetInstallDir"
+"$TargetFrpcExe" -c "$TargetConfigPath"
+"@
+    $launcher | Set-Content -Encoding ascii $launcherPath
+    return $launcherPath
+}
+
 function Stop-ExistingFrpc {
     param([string]$TargetInstallDir)
 
@@ -99,6 +131,65 @@ function Stop-ExistingFrpc {
             Write-Warning "Could not inspect or stop frpc process $($process.Id): $($_.Exception.Message)"
         }
     }
+}
+
+function Register-FrpcTask {
+    param(
+        [string]$TaskName,
+        [string]$TriggerKind,
+        [string]$LauncherPath,
+        [switch]$Force
+    )
+
+    if (-not (Get-Command Register-ScheduledTask -ErrorAction SilentlyContinue)) {
+        throw "Scheduled Task cmdlets are not available on this Windows installation."
+    }
+
+    if ($TriggerKind -eq "AtStartup" -and -not (Test-IsAdministrator)) {
+        throw "-ScheduledTaskTrigger AtStartup requires elevated PowerShell because it registers a SYSTEM startup task."
+    }
+
+    $existing = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    if ($existing -and -not $Force) {
+        throw "Scheduled Task '$TaskName' already exists. Rerun with -ForceScheduledTask to replace it."
+    }
+
+    $action = New-ScheduledTaskAction `
+        -Execute "$env:WINDIR\System32\cmd.exe" `
+        -Argument "/c `"$LauncherPath`""
+
+    if ($TriggerKind -eq "AtStartup") {
+        $trigger = New-ScheduledTaskTrigger -AtStartup
+        $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+    }
+    else {
+        $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+        $trigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
+        $principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel LeastPrivilege
+    }
+
+    $settings = New-ScheduledTaskSettingsSet `
+        -AllowStartIfOnBatteries `
+        -DontStopIfGoingOnBatteries `
+        -RestartCount 3 `
+        -RestartInterval (New-TimeSpan -Minutes 1)
+
+    $task = New-ScheduledTask `
+        -Action $action `
+        -Trigger $trigger `
+        -Principal $principal `
+        -Settings $settings `
+        -Description "Start CZ CloudService frpc using $LauncherPath"
+
+    $registerParams = @{
+        TaskName = $TaskName
+        InputObject = $task
+    }
+    if ($Force) {
+        $registerParams["Force"] = $true
+    }
+
+    Register-ScheduledTask @registerParams | Out-Null
 }
 
 if ([string]::IsNullOrWhiteSpace($ProxyName)) {
@@ -194,15 +285,11 @@ remotePort = $RemotePort
 
 $config | Set-Content -Encoding ascii $configPath
 
-if ($CreateStartupShortcut) {
-    $launcherPath = Join-Path $InstallDir "start-frpc.cmd"
-    $launcher = @"
-@echo off
-cd /d "$InstallDir"
-"$frpcExe" -c "$configPath"
-"@
-    $launcher | Set-Content -Encoding ascii $launcherPath
+if ($CreateStartupShortcut -or $RegisterScheduledTask) {
+    $launcherPath = New-FrpcLauncher -TargetInstallDir $InstallDir -TargetFrpcExe $frpcExe -TargetConfigPath $configPath
+}
 
+if ($CreateStartupShortcut) {
     $startupDir = [Environment]::GetFolderPath("Startup")
     $shortcutPath = Join-Path $startupDir "CZ CloudService frpc.lnk"
     $shell = New-Object -ComObject WScript.Shell
@@ -213,6 +300,11 @@ cd /d "$InstallDir"
     $shortcut.Description = "Start CZ CloudService frpc"
     $shortcut.Save()
     Write-Step "Created startup shortcut $shortcutPath"
+}
+
+if ($RegisterScheduledTask) {
+    Register-FrpcTask -TaskName $ScheduledTaskName -TriggerKind $ScheduledTaskTrigger -LauncherPath $launcherPath -Force:$ForceScheduledTask
+    Write-Step "Registered Scheduled Task '$ScheduledTaskName' with trigger $ScheduledTaskTrigger"
 }
 
 if ($StopExisting) {
@@ -237,3 +329,6 @@ Write-Host "Next checks:"
 Write-Host "  1. Windows local SSH: ssh -p $LocalPort admin@$LocalIP hostname"
 Write-Host "  2. ECS listener:       ssh root@$ServerAddr 'ss -tlnp | grep $RemotePort'"
 Write-Host "  3. Public SSH:         ssh -p $RemotePort admin@$ServerAddr hostname"
+if ($RegisterScheduledTask) {
+    Write-Host "  4. Scheduled Task:     Get-ScheduledTask -TaskName `"$ScheduledTaskName`""
+}

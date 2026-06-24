@@ -1,0 +1,16 @@
+bindPort = 7000
+
+auth.method = "token"
+auth.token = "<replace-with-runtime-token>"
+auth.additionalScopes = ["HeartBeats", "NewWorkConns"]
+
+transport.tls.force = true
+transport.tcpMux = false
+
+log.to = "/var/log/frps.log"
+log.level = "info"
+log.maxDays = 7
+
+allowPorts = [
+  { start = 2222, end = 2222 }
+]
