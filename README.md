@@ -5,7 +5,9 @@ CZ CloudService stores deployment guides, client scripts, and future UI code for
 ## Layout
 
 - `docs/frp/` - FRP deployment and troubleshooting guides.
+- `docs/ai-stack/` - AI server GPU layout, model deployment, and operations runbooks.
 - `scripts/windows/` - Windows client automation scripts.
+- `scripts/ai-stack/` - AI server status, smoke test, rebalance, context, and rollback helpers.
 - `examples/frp/` - Safe example FRP configuration files with placeholders only.
 - `apps/ui/` - Reserved for future UI work.
 
@@ -34,3 +36,13 @@ The script writes `frpc.toml` under `C:\Users\<user>\todesk-ssh`, starts `frpc`,
 ## Secret Handling
 
 Never commit real FRP tokens, SSH private keys, subscription links, or generated `frpc.toml` files. Use `examples/frp/frpc.example.toml` as the template and provide secrets at runtime.
+
+## AI Stack Operations
+
+Current AI server deployment notes and helper scripts are documented here:
+
+- [Current AI server deployment](docs/ai-stack/current-deployment.md)
+- [Qwen3.6 GPU rebalance change log](docs/ai-stack/change-log-2026-06-24-qwen36-rebalance.md)
+- [AI stack runbook](docs/ai-stack/runbook.md)
+
+The AI helper scripts intentionally do not store SSH passwords or API keys. Run them on the AI server after logging in, or use the connection helper to open an interactive session.

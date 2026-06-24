@@ -1,0 +1,143 @@
+# AI Stack Runbook
+
+This runbook describes how to operate the current AI server deployment.
+
+## Login
+
+Interactive login path:
+
+```bash
+ssh -p 2222 admin@60.205.213.254
+ssh ubuntu@192.168.100.12
+```
+
+Do not store passwords in shell history, scripts, docs, or Git.
+
+You can also try the helper from this repository:
+
+```bash
+scripts/ai-stack/open-ai-server-session.sh
+```
+
+The helper still prompts interactively for passwords.
+
+## Status Check
+
+After logging into `192.168.100.12`, run:
+
+```bash
+bash scripts/ai-stack/collect-ai-stack-status.sh
+```
+
+If the script is still only on your local machine, copy it through the SSH path first. The AI host is an internal address, so direct `scp ubuntu@192.168.100.12:...` only works from a machine that can route to that subnet. From a local machine that reaches the server through the Windows bastion, use `ProxyJump` if TCP forwarding is enabled:
+
+```bash
+scp -o ProxyJump=admin@60.205.213.254:2222 \
+  scripts/ai-stack/collect-ai-stack-status.sh \
+  ubuntu@192.168.100.12:/tmp/
+```
+
+If the bastion does not allow `ProxyJump`, open the nested SSH session and paste the script into `/tmp/collect-ai-stack-status.sh` with a heredoc:
+
+```bash
+cat > /tmp/collect-ai-stack-status.sh <<'SCRIPT'
+# paste script content here
+SCRIPT
+chmod +x /tmp/collect-ai-stack-status.sh
+bash /tmp/collect-ai-stack-status.sh
+```
+
+Expected services:
+
+```text
+ai-llm active enabled
+ai-vlm inactive disabled
+ai-speech active enabled
+ai-comfy active enabled
+ai-comfy-gpu2 active enabled
+```
+
+## Smoke Test
+
+Run on the AI server:
+
+```bash
+bash scripts/ai-stack/smoke-qwen36.sh
+```
+
+The script reads the API key from `/home/ubuntu/ai-stack/bin/run-llm.sh`; it does not print the key.
+
+Expected:
+
+```text
+models_http=200
+text_http=200
+image_http=200
+```
+
+The text test should answer `2`; the image test should answer `白色` for the built-in one-pixel sample image.
+
+## Change Qwen3.6 Context Length
+
+Run on the AI server:
+
+```bash
+sudo bash scripts/ai-stack/set-qwen36-context.sh 131072 --restart
+```
+
+Supported common values:
+
+- `32768`
+- `65536`
+- `131072`
+
+The current stable value is `131072`.
+
+The script creates a timestamped backup beside `run-llm.sh` before editing.
+
+## Reapply Current GPU Layout
+
+Run only when you intentionally want to reapply the current layout:
+
+```bash
+sudo bash scripts/ai-stack/rebalance-qwen36-comfy.sh --apply
+```
+
+Default layout:
+
+```text
+GPU0+1 -> Qwen3.6 FP8 TP=2, port 8000
+GPU2   -> secondary ComfyUI, port 8189; speech environment remains on GPU2
+GPU3   -> primary ComfyUI, port 8188
+8001   -> old ai-vlm disabled
+```
+
+The script is dry-run by default. It changes services only with `--apply`.
+
+## Roll Back From a Backup Directory
+
+Use only if a change breaks the service and you want to restore a known backup directory:
+
+```bash
+sudo bash scripts/ai-stack/rollback-ai-stack-backup.sh /home/ubuntu/ai-stack/backups/rebalance-20260623-225506 --apply
+```
+
+This restores files that exist in the backup directory and restarts available AI services.
+
+## Ports
+
+| Port | Expected result |
+| --- | --- |
+| `8000 /health` | `200` |
+| `8001 /health` | connection refused, expected |
+| `8002 /health` | `200` |
+| `8188 /` | `200` |
+| `8189 /` | `200` |
+
+## Troubleshooting Notes
+
+- If Qwen3.6 fails with FlashInfer or `nvcc` errors, confirm `VLLM_USE_FLASHINFER_SAMPLER=0` is set.
+- If TP=2 stalls after KV cache allocation, confirm `--disable-custom-all-reduce` is present.
+- If startup is slow, check `journalctl -u ai-llm.service -f`.
+- If ComfyUI uses little GPU memory at idle, that is normal; model weights are loaded when a workflow runs.
+- If `8001` is down, that is expected in the current architecture.
