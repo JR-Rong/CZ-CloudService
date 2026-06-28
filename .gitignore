@@ -18,6 +18,15 @@ id_*
 tunnel_ed25519*
 .env
 .env.*
+!.env.example
+!**/.env.example
+
+# Local Nextcloud runtime data
+deploy/nextcloud-frp/data/
+deploy/nextcloud-frp/frpc.toml
+
+# Local build cache used by one-click deployment scripts
+.work/
 
 # OS/editor noise
 .DS_Store

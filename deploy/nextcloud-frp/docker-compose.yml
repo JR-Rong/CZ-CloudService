@@ -1,0 +1,114 @@
+name: cz-nextcloud-drive
+
+services:
+  db:
+    image: mariadb:lts
+    restart: unless-stopped
+    command:
+      - --transaction-isolation=READ-COMMITTED
+      - --binlog-format=ROW
+      - --innodb-file-per-table=1
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-nextcloud}
+      MYSQL_USER: ${MYSQL_USER:-nextcloud}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set MYSQL_PASSWORD in .env}
+    volumes:
+      - ${NEXTCLOUD_ROOT:-./data}/db:/var/lib/mysql
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - mariadb-admin ping -h 127.0.0.1 -u root -p"$${MYSQL_ROOT_PASSWORD}" --silent
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    networks:
+      - cloud-drive
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --save "" --appendonly no
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cloud-drive
+
+  nextcloud:
+    image: nextcloud:stable-apache
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - ${NEXTCLOUD_LOCAL_BIND:-127.0.0.1}:${NEXTCLOUD_LOCAL_PORT:-8080}:80
+    environment:
+      MYSQL_HOST: db
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-nextcloud}
+      MYSQL_USER: ${MYSQL_USER:-nextcloud}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set MYSQL_PASSWORD in .env}
+      REDIS_HOST: redis
+      NEXTCLOUD_ADMIN_USER: ${NEXTCLOUD_ADMIN_USER:-admin}
+      NEXTCLOUD_ADMIN_PASSWORD: ${NEXTCLOUD_ADMIN_PASSWORD:?set NEXTCLOUD_ADMIN_PASSWORD in .env}
+      NEXTCLOUD_TRUSTED_DOMAINS: ${NEXTCLOUD_TRUSTED_DOMAINS:-60.205.213.254 60.205.213.254:2233 localhost 127.0.0.1}
+      OVERWRITEHOST: ${OVERWRITEHOST:-60.205.213.254:2233}
+      OVERWRITEPROTOCOL: ${OVERWRITEPROTOCOL:-http}
+      OVERWRITECLIURL: ${OVERWRITECLIURL:-http://60.205.213.254:2233}
+      PHP_MEMORY_LIMIT: ${PHP_MEMORY_LIMIT:-1024M}
+      PHP_UPLOAD_LIMIT: ${PHP_UPLOAD_LIMIT:-2048M}
+      APACHE_BODY_LIMIT: ${APACHE_BODY_LIMIT:-0}
+      NEXTCLOUD_INIT_HTACCESS: "true"
+    volumes:
+      - ${NEXTCLOUD_ROOT:-./data}/html:/var/www/html
+      - ${NEXTCLOUD_ROOT:-./data}/custom_apps:/var/www/html/custom_apps
+      - ${NEXTCLOUD_ROOT:-./data}/config:/var/www/html/config
+      - ${NEXTCLOUD_ROOT:-./data}/data:/var/www/html/data
+      - ${NEXTCLOUD_ROOT:-./data}/themes:/var/www/html/themes
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "php -r 'exit(@file_get_contents(\"http://127.0.0.1/status.php\") === false ? 1 : 0);'"
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
+    networks:
+      - cloud-drive
+
+  cron:
+    image: nextcloud:stable-apache
+    restart: unless-stopped
+    depends_on:
+      nextcloud:
+        condition: service_started
+    entrypoint: /cron.sh
+    volumes:
+      - ${NEXTCLOUD_ROOT:-./data}/html:/var/www/html
+      - ${NEXTCLOUD_ROOT:-./data}/custom_apps:/var/www/html/custom_apps
+      - ${NEXTCLOUD_ROOT:-./data}/config:/var/www/html/config
+      - ${NEXTCLOUD_ROOT:-./data}/data:/var/www/html/data
+      - ${NEXTCLOUD_ROOT:-./data}/themes:/var/www/html/themes
+    networks:
+      - cloud-drive
+
+  frpc:
+    image: fatedier/frpc:v0.69.1
+    restart: unless-stopped
+    depends_on:
+      nextcloud:
+        condition: service_healthy
+    command: ["-c", "/etc/frp/frpc.toml"]
+    volumes:
+      - ${FRPC_CONFIG_FILE:-./frpc.toml}:/etc/frp/frpc.toml:ro
+    networks:
+      - cloud-drive
+
+networks:
+  cloud-drive:
+    driver: bridge
