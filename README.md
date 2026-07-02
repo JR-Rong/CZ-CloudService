@@ -5,10 +5,12 @@ CZ CloudService stores deployment guides, client scripts, and future UI code for
 ## Layout
 
 - `docs/frp/` - FRP deployment and troubleshooting guides.
+- `docs/webdisk/` - File Browser web disk deployment and operations docs.
 - `docs/operations/` - Port and autostart inventory across FRP, SSH, and AI services.
 - `docs/ai-stack/` - AI server GPU layout, model deployment, and operations runbooks.
 - `scripts/cloud/` - Cloud server deployment helpers.
 - `scripts/windows/` - Windows client automation scripts.
+- `scripts/unix/` - macOS/Linux deployment helpers.
 - `scripts/ai-stack/` - AI server status, smoke test, rebalance, context, and rollback helpers.
 - `examples/frp/` - Safe example FRP configuration files with placeholders only.
 - `apps/ui/` - Reserved for future UI work.
@@ -48,6 +50,35 @@ FRPS_AUTH_TOKEN="<runtime-token>" bash scripts/cloud/setup-frps.sh --apply
 ```
 
 The script targets `frps` `0.69.1`, writes `/etc/frp/frps.toml`, writes `/etc/systemd/system/frps.service`, and enables/starts the service only in apply mode. Use `examples/frp/frps.example.toml` as a placeholder-only reference.
+
+## Web Disk
+
+The current web disk uses a custom File Browser binary on Windows and exposes it
+through a dedicated frpc proxy:
+
+```text
+browser -> 60.205.213.254:2233 -> frps -> Windows frpc -> 127.0.0.1:2233 -> File Browser
+```
+
+Start here:
+
+- [Web disk documentation index](docs/webdisk/README.md)
+- [Web disk + frpc one-click deployment](docs/webdisk/filebrowser-frpc-one-click.md)
+- [Web disk system and process documentation](docs/webdisk/system-process.md)
+
+One-click deploy from macOS/Linux:
+
+```bash
+CZ_SSH_PASSWORD=123456 \
+CZ_WINDOWS_ADMIN_PASSWORD=123456 \
+CZ_FILEBROWSER_WEB_PASSWORD=123456 \
+scripts/unix/deploy-webdisk-webpage.sh
+```
+
+`deploy-webdisk-webpage.sh` is the user-facing deployment entrypoint. It builds
+the custom File Browser web UI, uploads the Windows binary and install scripts,
+then restarts the `2233` web disk service through the lower-level
+`deploy-filebrowser-drive-remote.sh` helper.
 
 ## Secret Handling
 

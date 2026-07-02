@@ -19,6 +19,9 @@ tunnel_ed25519*
 .env
 .env.*
 
+# Local build cache for webdisk/File Browser one-click deployment
+.work/
+
 # OS/editor noise
 .DS_Store
 Thumbs.db

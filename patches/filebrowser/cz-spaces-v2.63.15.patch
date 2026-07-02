@@ -1,0 +1,142 @@
+diff --git a/files/file_test.go b/files/file_test.go
+index b5a8b37..1509499 100644
+--- a/files/file_test.go
++++ b/files/file_test.go
+@@ -92,6 +92,38 @@ func TestScopedFs(t *testing.T) {
+ 			t.Fatalf("expected in-scope symlink target to be accessible, got %v", err)
+ 		}
+ 	})
++
++	t.Run("user workspace shared sibling symlink is allowed", func(t *testing.T) {
++		data := t.TempDir()
++		scope := filepath.Join(data, "_users", "alice")
++		shared := filepath.Join(data, "_shared")
++		otherUser := filepath.Join(data, "_users", "bob")
++		for _, d := range []string{scope, shared, otherUser} {
++			if err := os.MkdirAll(d, 0o755); err != nil {
++				t.Fatal(err)
++			}
++		}
++		if err := os.WriteFile(filepath.Join(shared, "shared.txt"), []byte("shared"), 0o644); err != nil {
++			t.Fatal(err)
++		}
++		if err := os.WriteFile(filepath.Join(otherUser, "secret.txt"), []byte("secret"), 0o644); err != nil {
++			t.Fatal(err)
++		}
++		if err := os.Symlink(shared, filepath.Join(scope, "shared-space")); err != nil {
++			t.Skipf("cannot create shared symlink: %v", err)
++		}
++		if err := os.Symlink(otherUser, filepath.Join(scope, "escape")); err != nil {
++			t.Skipf("cannot create escape symlink: %v", err)
++		}
++		fs := NewScopedFs(afero.NewOsFs(), scope)
++
++		if _, err := fs.Stat("/shared-space/shared.txt"); err != nil {
++			t.Fatalf("expected shared sibling symlink to be accessible, got %v", err)
++		}
++		if _, err := fs.Stat("/escape/secret.txt"); !os.IsPermission(err) {
++			t.Fatalf("expected other user symlink to remain rejected, got %v", err)
++		}
++	})
+ }
+ 
+ // stat must reject a regular file reached through a symlinked ancestor that
+diff --git a/files/scoped.go b/files/scoped.go
+index eef6378..4546cbd 100644
+--- a/files/scoped.go
++++ b/files/scoped.go
+@@ -5,6 +5,7 @@ import (
+ 	"io/fs"
+ 	"os"
+ 	"path/filepath"
++	"runtime"
+ 	"strings"
+ 	"time"
+ 
+@@ -88,6 +89,37 @@ func (s *ScopedFs) within(p string) (bool, error) {
+ 		return false, err
+ 	}
+ 
++	if sameOrChildPath(resolved, root) {
++		return true, nil
++	}
++
++	sharedRoot, ok := sharedSiblingRoot(root)
++	if !ok {
++		return false, nil
++	}
++	sharedResolved, err := filepath.EvalSymlinks(sharedRoot)
++	if err != nil {
++		return false, nil
++	}
++	return sameOrChildPath(resolved, sharedResolved), nil
++}
++
++func sharedSiblingRoot(root string) (string, bool) {
++	usersRoot := filepath.Dir(root)
++	if filepath.Base(usersRoot) != "_users" {
++		return "", false
++	}
++	return filepath.Join(filepath.Dir(usersRoot), "_shared"), true
++}
++
++func sameOrChildPath(candidate, root string) bool {
++	candidate = filepath.Clean(candidate)
++	root = filepath.Clean(root)
++	if runtime.GOOS == "windows" {
++		candidate = strings.ToLower(candidate)
++		root = strings.ToLower(root)
++	}
++
+ 	// Compare against root with a trailing separator so a sibling like
+ 	// "/srvother" is not treated as being inside "/srv". When root is itself the
+ 	// filesystem boundary (e.g. "/"), it already ends in a separator, so avoid
+@@ -97,7 +129,7 @@ func (s *ScopedFs) within(p string) (bool, error) {
+ 		prefix += string(filepath.Separator)
+ 	}
+ 
+-	return resolved == root || strings.HasPrefix(resolved, prefix), nil
++	return candidate == root || strings.HasPrefix(candidate, prefix)
+ }
+ 
+ func (s *ScopedFs) Create(name string) (afero.File, error) {
+diff --git a/frontend/src/components/Sidebar.vue b/frontend/src/components/Sidebar.vue
+index ff74aa4..bc4d3a6 100644
+--- a/frontend/src/components/Sidebar.vue
++++ b/frontend/src/components/Sidebar.vue
+@@ -6,14 +6,13 @@
+         <i class="material-icons">person</i>
+         <span>{{ user.username }}</span>
+       </button>
+-      <button
+-        class="action"
+-        @click="toRoot"
+-        :aria-label="$t('sidebar.myFiles')"
+-        :title="$t('sidebar.myFiles')"
+-      >
++      <button class="action" @click="toPrivateSpace" aria-label="私人空间" title="私人空间">
+         <i class="material-icons">folder</i>
+-        <span>{{ $t("sidebar.myFiles") }}</span>
++        <span>私人空间</span>
++      </button>
++      <button class="action" @click="toSharedSpace" aria-label="共享空间" title="共享空间">
++        <i class="material-icons">folder_shared</i>
++        <span>共享空间</span>
+       </button>
+ 
+       <div v-if="user.perm.create">
+@@ -188,8 +187,12 @@ export default {
+         return Object.assign(this.usage, usageStats);
+       }
+     },
+-    toRoot() {
+-      this.$router.push({ path: "/files" });
++    toPrivateSpace() {
++      this.$router.push({ path: "/files/私人空间" });
++      this.closeHovers();
++    },
++    toSharedSpace() {
++      this.$router.push({ path: "/files/共享空间" });
+       this.closeHovers();
+     },
+     toAccountSettings() {

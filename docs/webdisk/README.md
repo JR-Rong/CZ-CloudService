@@ -1,122 +1,45 @@
-# Web Disk Deployment Notes
+# Web Disk Documentation
 
-Status: investigation-only
-
-This document records the current web disk evidence and the safe checks needed
-before claiming a completed deployment. It is intentionally generic: public
-ports such as `2233` are evidence points, not the document identity.
-
-## Current Conclusion
-
-The web disk deployment is not yet documented well enough to reproduce or
-operate safely.
-
-Known evidence:
-
-| Endpoint | Current observation | Interpretation |
-| --- | --- | --- |
-| `60.205.213.254:2233` | TCP reachable, but direct HTTP returns an empty reply and HTTPS fails during TLS setup | A public listener exists, but the active backend is unconfirmed |
-| `192.168.100.12:80` | Historical note described an Apache/Nextcloud-style page | Likely a separate internal web service clue, not proof for the public endpoint |
-
-A prior local investigation note outside this repository associated public port
-`2233` with a Windows-side `filebrowser.exe` process. Current public probes did
-not independently confirm File Browser, Nextcloud, or Apache as the active
-backend.
-
-## Evidence Collected
-
-Repository search before this document and the non-webdisk operations inventory
-were added did not find an existing web disk deployment document, script, or
-configuration.
-
-Command:
-
-```bash
-rg -n -i "web[ -]?disk|webdisk|2233|filebrowser|file browser|nextcloud|apache|60\.205\.213\.254|192\.168\.100\.12" README.md docs scripts examples
-```
-
-Reduced findings:
+当前网页网盘方案是 Windows 主机上的自定义 File Browser，通过 FRP 暴露到公网 `2233`。
 
 ```text
-examples/frp/frpc.example.toml:1:serverAddr = "60.205.213.254"
-scripts/windows/setup-frpc.ps1:16:    [string]$ServerAddr = "60.205.213.254",
-docs/frp/windows-client-deployment-guide.md:15:- 公网 IP：`60.205.213.254`
-docs/frp/windows-client-deployment-guide.md:22:- frpc 连接 ECS：`60.205.213.254:7000`
-docs/frp/windows-client-deployment-guide.md:29:  -> 60.205.213.254:2222
-docs/ai-stack/current-deployment.md:8:ssh -p 2222 admin@60.205.213.254
-docs/ai-stack/current-deployment.md:9:ssh ubuntu@192.168.100.12
-scripts/ai-stack/smoke-qwen36.sh:4:HOST="${AI_BIND_HOST:-192.168.100.12}"
+browser -> 60.205.213.254:2233 -> cloud frps -> Windows frpc -> 127.0.0.1:2233 -> File Browser
 ```
 
-Public endpoint probes against `60.205.213.254:2233`:
+核心文档：
 
-```bash
-nc -vz -w 5 60.205.213.254 2233
-curl --noproxy '*' -sS -I --max-time 10 http://60.205.213.254:2233/
-curl --noproxy '*' -k -sS -I --max-time 10 https://60.205.213.254:2233/
-```
+- [网盘 + frpc 一键部署教程](filebrowser-frpc-one-click.md)
+- [网盘系统说明与部署流程](system-process.md)
 
-Observed result:
+相关脚本和补丁：
 
-```text
-TCP connect succeeded.
-HTTP returned: curl: (52) Empty reply from server
-HTTPS returned: LibreSSL SSL_connect: SSL_ERROR_SYSCALL
-```
+- `scripts/unix/deploy-webdisk-webpage.sh`
+- `scripts/unix/deploy-filebrowser-drive-remote.sh`
+- `scripts/windows/install-filebrowser-drive.ps1`
+- `scripts/windows/setup-cloud-drive-frpc.ps1`
+- `patches/filebrowser/cz-spaces-v2.63.15.patch`
+- `tests/verify-filebrowser-drive.sh`
 
-The local shell had proxy environment variables set, so direct probes used
-`--noproxy '*'`. A proxied `curl` returned `HTTP/1.1 503 Service Unavailable`,
-which is not reliable evidence for the target service itself.
+当前线上约定：
 
-## Deployment Hypotheses
+| 项目 | 值 |
+| --- | --- |
+| 公网访问 | `http://60.205.213.254:2233` |
+| Windows SSH | `ssh -p 2222 admin@60.205.213.254` |
+| Windows 安装目录 | `C:\CZCloudDrive` |
+| File Browser 数据目录 | `C:\CZCloudDrive\data` |
+| File Browser 服务任务 | `CZCloudDrive` |
+| 2233 frpc 任务 | `CZCloudDriveFrpc` |
+| 用户工作区同步任务 | `CZCloudDriveWorkspaceSync` |
 
-These are hypotheses only. Do not treat any of them as the current deployment
-until they are verified from the relevant host.
+功能模型：
 
-| Hypothesis | Supporting clue | Missing proof |
-| --- | --- | --- |
-| Windows File Browser exposed through FRP | Prior note associated `2233` with `filebrowser.exe`; the repo already documents the ECS/frp pattern for SSH | Current Windows process list, frpc proxy config, data directory, auth config |
-| Internal Nextcloud/Apache service | Prior note saw an Apache/Nextcloud-style page on `192.168.100.12:80` | Current internal HTTP response and whether it is related to public web disk access |
-| Dead or miswired public listener | Public TCP accepts but HTTP/HTTPS do not identify a web app | ECS frps logs, `allowPorts`, and active frpc registration |
+- `私人空间`：每个普通用户只看见自己的私有目录，只能增删改查自己的文件。
+- `共享空间`：所有普通用户进入同一个公共 `_shared` 目录，都可以增删改查。
+- 管理员仍使用 File Browser 的用户管理能力，但根目录也提供同名入口，便于浏览和排障。
 
-## What Is Not Yet Complete
+安全提醒：
 
-- No reproducible web disk deployment script is present.
-- No confirmed service manager entry is documented for File Browser, Nextcloud,
-  Apache, or another web disk backend.
-- No confirmed data directory, user/auth configuration, backup procedure, or
-  rollback process is recorded.
-- No confirmed autostart path exists for the web disk service.
-- No confirmed public access path exists beyond the current TCP listener.
-
-## Safe Next Checks
-
-Keep these checks read-only until the backend and data location are understood.
-
-On the ECS/frps host:
-
-```bash
-ss -tlnp | grep -E '(:7000|:2222|:2233)([[:space:]]|$)' || true
-grep -R "2233" /etc/frp /etc/systemd/system /usr/local/etc 2>/dev/null || true
-journalctl -u frps -n 120 --no-pager
-```
-
-On the Windows/frpc host reached through the documented SSH path:
-
-```powershell
-netstat -ano | findstr ":2233"
-Get-Process | Where-Object { $_.ProcessName -match "filebrowser|frpc" } | Select-Object Id,ProcessName,Path
-Get-CimInstance Win32_Process | Where-Object { $_.Name -match "filebrowser|frpc" } | Select-Object Name,ProcessId,CommandLine
-Get-ChildItem -Path C:\ -Filter "*filebrowser*" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 50 FullName
-```
-
-For the separate internal Nextcloud/Apache clue:
-
-```bash
-curl -I --max-time 10 http://192.168.100.12/
-curl -sS --max-time 10 http://192.168.100.12/ | sed -n '1,40p'
-```
-
-Do not attempt logins, credential resets, service restarts, config edits, or a
-new web disk deployment until these read-only checks identify the active
-backend and data path.
+- 文档中的 `123456` 是当前受控环境的默认密码约定；正式使用前应更换。
+- 不要提交真实 FRP token、SSH key、`.env`、`frpc.toml`、网盘数据或备份文件。
+- `scripts/unix/deploy-webdisk-webpage.sh` 会重新构建并替换远端 `filebrowser.exe`，替换前会保留旧二进制备份。
