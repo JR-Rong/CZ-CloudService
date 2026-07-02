@@ -69,7 +69,19 @@ Rollback safety:
 
 ## Webdisk
 
-Webdisk deployment is investigation-only and out of scope for this completion
-pass. This document does not claim a completed webdisk port, autostart path, or
-deployment script. See `docs/webdisk/README.md` for the generic investigation
-notes and safe next checks.
+| Item | Value |
+| --- | --- |
+| Public URL | `http://60.205.213.254:2233` |
+| Public port | `2233/tcp` on cloud `frps` |
+| Windows local port | `127.0.0.1:2233` |
+| Windows File Browser task | `CZCloudDrive` |
+| Windows webdisk frpc task | `CZCloudDriveFrpc` |
+| Workspace sync task | `CZCloudDriveWorkspaceSync` |
+| Install dir | `C:\CZCloudDrive` |
+| Data dir | `C:\CZCloudDrive\data` |
+
+The webdisk deployment is documented in `docs/webdisk/`. The reproducible entry
+point is `scripts/unix/deploy-webdisk-webpage.sh`, which builds the custom File
+Browser web UI and binary, uploads it to Windows, installs File Browser, starts
+the 2233 frpc task, and verifies the public endpoint. The lower-level helper is
+`scripts/unix/deploy-filebrowser-drive-remote.sh`.
