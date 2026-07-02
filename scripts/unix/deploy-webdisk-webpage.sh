@@ -11,6 +11,8 @@ Build and deploy the CZ web disk webpage and File Browser service to Windows.
 
 Common environment overrides:
   CZ_DRIVE_HOST=60.205.213.254
+  CZ_DRIVE_SSH_HOST=60.205.213.254
+  CZ_DRIVE_PUBLIC_HOST=60.205.213.254
   CZ_DRIVE_SSH_PORT=2222
   CZ_DRIVE_SSH_USER=admin
   CZ_SSH_PASSWORD=123456
@@ -18,6 +20,9 @@ Common environment overrides:
   CZ_FILEBROWSER_WEB_PASSWORD=123456
   CZ_DRIVE_PORT=2233
   CZ_FRONTEND_BUILD_MODE=auto
+  CZ_NODE_IMAGE=node:22-bookworm
+  CZ_GO_BUILD_MODE=docker
+  CZ_GO_IMAGE=golang:1.25
 
 This entrypoint delegates the build, upload, Windows install, frpc setup, and
 public endpoint verification to deploy-filebrowser-drive-remote.sh.

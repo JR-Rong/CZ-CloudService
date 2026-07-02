@@ -65,8 +65,18 @@ require_grep 'RepetitionInterval' scripts/windows/install-filebrowser-drive.ps1
 require_grep 'deploy-filebrowser-drive-remote\.sh' scripts/unix/deploy-webdisk-webpage.sh
 require_grep 'Build and deploy the CZ web disk webpage' scripts/unix/deploy-webdisk-webpage.sh
 require_grep 'CZ_DRIVE_PORT=2233' scripts/unix/deploy-webdisk-webpage.sh
+require_grep 'CZ_NODE_IMAGE=node:22-bookworm' scripts/unix/deploy-webdisk-webpage.sh
+require_grep 'CZ_GO_IMAGE=golang:1\.25' scripts/unix/deploy-webdisk-webpage.sh
+require_grep 'CZ_DRIVE_SSH_HOST' scripts/unix/deploy-webdisk-webpage.sh
 require_grep 'CZ_DRIVE_HOST' scripts/unix/deploy-filebrowser-drive-remote.sh
+require_grep 'CZ_DRIVE_SSH_HOST' scripts/unix/deploy-filebrowser-drive-remote.sh
+require_grep 'CZ_DRIVE_PUBLIC_HOST' scripts/unix/deploy-filebrowser-drive-remote.sh
 require_grep 'CZ_FRONTEND_BUILD_MODE' scripts/unix/deploy-filebrowser-drive-remote.sh
+require_grep 'CZ_NODE_IMAGE' scripts/unix/deploy-filebrowser-drive-remote.sh
+require_grep 'CZ_GO_BUILD_MODE' scripts/unix/deploy-filebrowser-drive-remote.sh
+require_grep 'CZ_GO_IMAGE' scripts/unix/deploy-filebrowser-drive-remote.sh
+require_grep 'docker_failure_hint' scripts/unix/deploy-filebrowser-drive-remote.sh
+require_grep 'corepack pnpm' scripts/unix/deploy-filebrowser-drive-remote.sh
 require_grep 'cz-spaces-v2\.63\.15\.patch' scripts/unix/deploy-filebrowser-drive-remote.sh
 require_grep 'pnpm run build' scripts/unix/deploy-filebrowser-drive-remote.sh
 require_grep 'GOOS=windows' scripts/unix/deploy-filebrowser-drive-remote.sh
@@ -99,6 +109,10 @@ require_grep 'deploy-webdisk-webpage\.sh' docs/webdisk/filebrowser-frpc-one-clic
 require_grep 'install-filebrowser-drive\.ps1' docs/webdisk/filebrowser-frpc-one-click.md
 require_grep 'setup-cloud-drive-frpc\.ps1' docs/webdisk/filebrowser-frpc-one-click.md
 require_grep 'CZ_FRONTEND_BUILD_MODE' docs/webdisk/filebrowser-frpc-one-click.md
+require_grep 'CZ_NODE_IMAGE' docs/webdisk/filebrowser-frpc-one-click.md
+require_grep 'CZ_GO_BUILD_MODE' docs/webdisk/filebrowser-frpc-one-click.md
+require_grep 'CZ_DRIVE_SSH_HOST=127\.0\.0\.1' docs/webdisk/filebrowser-frpc-one-click.md
+require_grep 'Docker Hub 拉取超时' docs/webdisk/filebrowser-frpc-one-click.md
 require_grep '-Port 2233' docs/webdisk/filebrowser-frpc-one-click.md
 require_grep '123456' docs/webdisk/filebrowser-frpc-one-click.md
 require_grep 'data\\_users' docs/webdisk/filebrowser-frpc-one-click.md

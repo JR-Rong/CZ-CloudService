@@ -77,7 +77,9 @@ scripts/unix/deploy-webdisk-webpage.sh
 
 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `CZ_DRIVE_HOST` | `60.205.213.254` | Windows SSH 和公网访问目标 |
+| `CZ_DRIVE_HOST` | `60.205.213.254` | Windows SSH 和公网验证的默认目标 |
+| `CZ_DRIVE_SSH_HOST` | 同 `CZ_DRIVE_HOST` | 仅覆盖 SSH/SCP 目标；在 ECS 上运行时可设为 `127.0.0.1` |
+| `CZ_DRIVE_PUBLIC_HOST` | 同 `CZ_DRIVE_HOST` | 仅覆盖公网 HTTP 验证目标 |
 | `CZ_DRIVE_SSH_PORT` | `2222` | Windows SSH 的公网 FRP 端口 |
 | `CZ_DRIVE_SSH_USER` | `admin` | Windows SSH 用户 |
 | `CZ_DRIVE_PORT` | `2233` | 网盘公网端口和 Windows 本地端口 |
@@ -85,6 +87,20 @@ scripts/unix/deploy-webdisk-webpage.sh
 | `CZ_FILEBROWSER_VERSION` | `v2.63.15` | 上游 File Browser 版本 |
 | `CZ_SETUP_FRPC` | `1` | 是否部署 `CZCloudDriveFrpc` |
 | `CZ_FRONTEND_BUILD_MODE` | `auto` | `auto`、`local` 或 `docker` |
+| `CZ_NODE_IMAGE` | `node:22-bookworm` | Docker 前端构建镜像，可替换为可访问的镜像源 |
+| `CZ_GO_BUILD_MODE` | `docker` | Go 构建方式：`docker` 或 `local` |
+| `CZ_GO_IMAGE` | `golang:1.25` | Docker Go 构建镜像，可替换为可访问的镜像源 |
+
+如果脚本是在云端 ECS/frps 主机上运行，推荐显式拆分 SSH 目标和公网验证目标：
+
+```bash
+CZ_DRIVE_SSH_HOST=127.0.0.1 \
+CZ_DRIVE_PUBLIC_HOST=60.205.213.254 \
+CZ_SSH_PASSWORD=123456 \
+CZ_WINDOWS_ADMIN_PASSWORD=123456 \
+CZ_FILEBROWSER_WEB_PASSWORD=123456 \
+scripts/unix/deploy-webdisk-webpage.sh
+```
 
 ## 4. 一键脚本做了什么
 
@@ -98,6 +114,7 @@ scripts/unix/deploy-webdisk-webpage.sh
 2. 应用 `patches/filebrowser/cz-spaces-v2.63.15.patch`。
 3. 构建前端：
    - `auto` 模式优先使用本机 `pnpm install --frozen-lockfile && pnpm run build`。
+   - 如果本机有 Node.js 和 Corepack，也可通过 `corepack pnpm` 本机构建。
    - 没有 `pnpm` 时使用 `node:22-bookworm` Docker 镜像。
 4. 用 `golang:1.25` Docker 镜像交叉编译 Windows x64 `filebrowser-cz.exe`。
 5. 上传以下文件到 Windows `C:\CZCloudDrive`：
@@ -192,7 +209,46 @@ Get-NetTCPConnection -LocalPort 2233 -State Listen
 tests/verify-filebrowser-drive.sh
 ```
 
-## 7. 回滚
+## 7. Docker Hub 拉取超时
+
+如果看到类似错误：
+
+```text
+failed to resolve reference "docker.io/library/node:22-bookworm"
+dial tcp ... i/o timeout
+```
+
+原因是当前机器访问 Docker Hub 超时，不是 File Browser 补丁失败。
+
+可选处理方式：
+
+1. 改用本机构建前端：
+
+```bash
+CZ_FRONTEND_BUILD_MODE=local scripts/unix/deploy-webdisk-webpage.sh
+```
+
+这需要本机已经安装 Node.js、Corepack 或 pnpm。
+
+2. 改用本机 Go 构建二进制：
+
+```bash
+CZ_GO_BUILD_MODE=local scripts/unix/deploy-webdisk-webpage.sh
+```
+
+这需要本机已经安装 Go，并且版本足够构建 File Browser。
+
+3. 使用当前服务器可访问的镜像源：
+
+```bash
+CZ_NODE_IMAGE=<your-registry>/library/node:22-bookworm \
+CZ_GO_IMAGE=<your-registry>/library/golang:1.25 \
+scripts/unix/deploy-webdisk-webpage.sh
+```
+
+也可以先手动 `docker pull` 对应镜像，成功后再重新运行一键脚本。
+
+## 8. 回滚
 
 一键脚本替换 `filebrowser.exe` 前会备份旧文件：
 

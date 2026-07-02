@@ -4,7 +4,9 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/../.." && pwd)"
 
-remote_host="${CZ_DRIVE_HOST:-60.205.213.254}"
+drive_host="${CZ_DRIVE_HOST:-60.205.213.254}"
+remote_host="${CZ_DRIVE_SSH_HOST:-$drive_host}"
+public_host="${CZ_DRIVE_PUBLIC_HOST:-$drive_host}"
 remote_ssh_port="${CZ_DRIVE_SSH_PORT:-2222}"
 remote_user="${CZ_DRIVE_SSH_USER:-admin}"
 remote_install_dir="${CZ_DRIVE_INSTALL_DIR:-C:/CZCloudDrive}"
@@ -14,6 +16,9 @@ windows_admin_password="${CZ_WINDOWS_ADMIN_PASSWORD:-123456}"
 web_password="${CZ_FILEBROWSER_WEB_PASSWORD:-123456}"
 setup_frpc="${CZ_SETUP_FRPC:-1}"
 frontend_build_mode="${CZ_FRONTEND_BUILD_MODE:-auto}"
+go_build_mode="${CZ_GO_BUILD_MODE:-docker}"
+node_image="${CZ_NODE_IMAGE:-node:22-bookworm}"
+go_image="${CZ_GO_IMAGE:-golang:1.25}"
 build_root="${CZ_FILEBROWSER_BUILD_DIR:-$repo_root/.work/filebrowser-build}"
 source_dir="$build_root/source"
 patch_file="$repo_root/patches/filebrowser/cz-spaces-v2.63.15.patch"
@@ -31,7 +36,9 @@ usage() {
 Usage: $0
 
 Environment overrides:
-  CZ_DRIVE_HOST=60.205.213.254
+  CZ_DRIVE_HOST=60.205.213.254       # default for SSH and public verification
+  CZ_DRIVE_SSH_HOST=60.205.213.254   # override SSH target only
+  CZ_DRIVE_PUBLIC_HOST=60.205.213.254 # override public verification host only
   CZ_DRIVE_SSH_PORT=2222
   CZ_DRIVE_SSH_USER=admin
   CZ_SSH_PASSWORD=123456              # optional; requires sshpass
@@ -40,6 +47,9 @@ Environment overrides:
   CZ_DRIVE_PORT=2233
   CZ_SETUP_FRPC=1                     # set 0 to skip cloud-drive frpc setup
   CZ_FRONTEND_BUILD_MODE=auto          # auto, local, or docker
+  CZ_NODE_IMAGE=node:22-bookworm       # override when Docker Hub is slow/blocked
+  CZ_GO_BUILD_MODE=docker              # docker or local
+  CZ_GO_IMAGE=golang:1.25              # override when Docker Hub is slow/blocked
 EOF
 }
 
@@ -48,7 +58,7 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   exit 0
 fi
 
-for cmd in git docker ssh scp curl python3; do
+for cmd in git ssh scp curl python3; do
   require_cmd "$cmd"
 done
 
@@ -66,7 +76,7 @@ if [[ -n "${CZ_SSH_PASSWORD:-}" ]]; then
 fi
 
 remote_target="$remote_user@$remote_host"
-public_base_url="http://$remote_host:$drive_port"
+public_base_url="http://$public_host:$drive_port"
 
 remote_powershell() {
   "${ssh_cmd[@]}" "$remote_target" \
@@ -80,7 +90,7 @@ json_escape() {
 build_frontend() {
   case "$frontend_build_mode" in
     auto)
-      if command -v pnpm >/dev/null 2>&1; then
+      if can_build_frontend_local; then
         build_frontend_local
       else
         build_frontend_docker
@@ -99,21 +109,97 @@ build_frontend() {
   esac
 }
 
+can_build_frontend_local() {
+  command -v pnpm >/dev/null 2>&1 || {
+    command -v node >/dev/null 2>&1 && command -v corepack >/dev/null 2>&1
+  }
+}
+
+run_pnpm() {
+  if command -v pnpm >/dev/null 2>&1; then
+    pnpm "$@"
+  else
+    corepack pnpm "$@"
+  fi
+}
+
 build_frontend_local() {
-  require_cmd pnpm
+  if ! can_build_frontend_local; then
+    echo "Missing pnpm, or node + corepack, for local frontend build." >&2
+    exit 1
+  fi
   (
     cd "$source_dir/frontend"
-    pnpm install --frozen-lockfile
-    pnpm run build
+    run_pnpm install --frozen-lockfile
+    run_pnpm run build
   )
 }
 
+docker_failure_hint() {
+  local image="$1"
+  cat >&2 <<EOF
+
+Docker image failed: $image
+
+If this host cannot reach Docker Hub, use one of these options:
+  - Set CZ_NODE_IMAGE or CZ_GO_IMAGE to an image registry this host can pull.
+  - Pre-pull the image on this host and rerun the script.
+  - Install local Node.js/corepack/pnpm and use CZ_FRONTEND_BUILD_MODE=local.
+  - Install local Go and use CZ_GO_BUILD_MODE=local.
+
+When running on the cloud frps host itself, also consider:
+  CZ_DRIVE_SSH_HOST=127.0.0.1
+  CZ_DRIVE_PUBLIC_HOST=60.205.213.254
+EOF
+}
+
 build_frontend_docker() {
-  docker run --rm \
+  require_cmd docker
+  if ! docker run --rm \
     -v "$source_dir:/src" \
     -w /src/frontend \
-    node:22-bookworm \
-    bash -lc 'corepack enable && pnpm install --frozen-lockfile && pnpm run build'
+    "$node_image" \
+    bash -lc 'corepack enable && pnpm install --frozen-lockfile && pnpm run build'; then
+    docker_failure_hint "$node_image"
+    exit 1
+  fi
+}
+
+build_windows_binary() {
+  case "$go_build_mode" in
+    docker)
+      build_windows_binary_docker
+      ;;
+    local)
+      build_windows_binary_local
+      ;;
+    *)
+      echo "Invalid CZ_GO_BUILD_MODE: $go_build_mode" >&2
+      exit 1
+      ;;
+  esac
+}
+
+build_windows_binary_local() {
+  require_cmd go
+  (
+    cd "$source_dir"
+    GOOS=windows GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o "$binary_path"
+  )
+}
+
+build_windows_binary_docker() {
+  require_cmd docker
+  if ! docker run --rm \
+    -v "$source_dir:/src" \
+    -w /src \
+    -e GOOS=windows \
+    -e GOARCH=amd64 \
+    "$go_image" \
+    go build -trimpath -ldflags='-s -w' -o /src/filebrowser-cz.exe; then
+    docker_failure_hint "$go_image"
+    exit 1
+  fi
 }
 
 echo "==> Building custom File Browser $filebrowser_version"
@@ -124,13 +210,7 @@ git -C "$source_dir" apply "$patch_file"
 
 build_frontend
 
-docker run --rm \
-  -v "$source_dir:/src" \
-  -w /src \
-  -e GOOS=windows \
-  -e GOARCH=amd64 \
-  golang:1.25 \
-  go build -trimpath -ldflags='-s -w' -o /src/filebrowser-cz.exe
+build_windows_binary
 
 if [[ ! -s "$binary_path" ]]; then
   echo "Build did not produce $binary_path" >&2
