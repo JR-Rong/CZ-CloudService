@@ -16,7 +16,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
-$ScriptVersion = 1
+$ScriptVersion = 2
 $ScriptPath = $MyInvocation.MyCommand.Path
 $ScriptDir = Split-Path -Parent $ScriptPath
 $IsWindowsPlatform = $env:OS -eq "Windows_NT"
@@ -295,12 +295,13 @@ table inet cz_safety {
     ct state established,related accept
     oifname "lo" accept
     ip protocol icmp accept
-    udp dport { 53, 123, 443 } accept
+    udp dport { 53, 123 } accept
     tcp dport { 53, 80, 443 } accept
   }
 }
 CZ_NFT
 cat > /etc/ssh/sshd_config.d/60-cz-safety.conf <<'CZ_SSH'
+Port ${sshPort}
 PermitRootLogin no
 PasswordAuthentication no
 KbdInteractiveAuthentication no
@@ -457,6 +458,12 @@ function Invoke-SelfTest {
     $payload = Get-UbuntuHardeningPayload $sample
     Assert-SelfTest ($payload.Contains("policy drop")) "Ubuntu default drop missing"
     Assert-SelfTest ($payload.Contains("PasswordAuthentication no")) "Ubuntu SSH password hardening missing"
+    Assert-SelfTest (-not $payload.Contains("udp dport { 53, 123, 443 }")) "embedded Ubuntu strict egress unexpectedly allows UDP/443"
+    $customPortSample = $sample | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+    $customPortSample.server.sshPort = 2222
+    $customPortPayload = Get-UbuntuHardeningPayload $customPortSample
+    Assert-SelfTest ($customPortPayload.Contains("Port 2222")) "custom SSH port missing from sshd drop-in"
+    Assert-SelfTest ($customPortPayload.Contains("tcp dport { 2222, 443 }")) "custom SSH port missing from nftables"
     $bash = Get-Command bash -ErrorAction SilentlyContinue
     if ($bash) {
         & $bash.Source -n -c $payload
@@ -865,9 +872,17 @@ Endpoint = $((Get-CidrInfo ([string]$Site.public.cidr)).Address):$($Site.public.
 AllowedIPs = $allowed
 PersistentKeepalive = 25
 "@ | Set-Content -LiteralPath (Join-Path $paths.Exports "$PeerName.conf") -Encoding ascii
-    & ([string]$Site.wireguard.wireguardExe) /uninstalltunnelservice ([string]$Site.vpn.interfaceName) 2>$null
-    & ([string]$Site.wireguard.wireguardExe) /installtunnelservice $wgConfig
+    Restart-WireGuardTunnelForPeerChange $Site $wgConfig
     Write-Info "Peer created: $PeerName ($Role, $address)"
+}
+
+function Restart-WireGuardTunnelForPeerChange {
+    param([object]$Site, [string]$ConfigPath)
+    Write-Warning "Updating peers reinstalls the WireGuard tunnel service and briefly disconnects every active peer; perform this in a maintenance window"
+    & ([string]$Site.wireguard.wireguardExe) /uninstalltunnelservice ([string]$Site.vpn.interfaceName) 2>$null
+    if ($LASTEXITCODE -ne 0) { Write-Warning "WireGuard tunnel uninstall returned exit code $LASTEXITCODE; attempting a clean install" }
+    & ([string]$Site.wireguard.wireguardExe) /installtunnelservice $ConfigPath
+    if ($LASTEXITCODE -ne 0) { throw "WireGuard tunnel service reinstall failed after the peer change" }
 }
 
 function Invoke-PeerRevoke {
@@ -880,8 +895,7 @@ function Invoke-PeerRevoke {
     $paths = Get-StatePaths
     Remove-Item -LiteralPath (Join-Path $paths.Exports "$PeerName.conf") -Force -ErrorAction SilentlyContinue
     $wgConfig = Write-WireGuardConfig $Site
-    & ([string]$Site.wireguard.wireguardExe) /uninstalltunnelservice ([string]$Site.vpn.interfaceName) 2>$null
-    & ([string]$Site.wireguard.wireguardExe) /installtunnelservice $wgConfig
+    Restart-WireGuardTunnelForPeerChange $Site $wgConfig
     Write-Info "Peer revoked: $PeerName"
 }
 

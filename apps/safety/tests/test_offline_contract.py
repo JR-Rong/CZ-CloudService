@@ -53,11 +53,18 @@ class OfflineContractTests(unittest.TestCase):
         for required in (
             "policy drop",
             "udp dport 51820 accept",
+            "udp dport { 53, 123 } accept",
             "PasswordAuthentication no",
             'ip daddr 192.168.100.10 tcp dport 443 accept',
             "PrivateKey = <redacted>",
         ):
             self.assertIn(required, plan)
+        self.assertNotIn("udp dport { 53, 123, 443 } accept", plan)
+        with tempfile.TemporaryDirectory() as directory:
+            staged = Path(directory) / "staged.conf"
+            staged.write_text(UBUNTU_CONFIG.read_text().replace("EGRESS_MODE=strict", "EGRESS_MODE=staged"))
+            staged_plan = run(UBUNTU_SCRIPT, "plan", "--config", staged).stdout
+        self.assertIn("udp dport { 53, 123, 443 } accept", staged_plan)
 
     def test_ubuntu_rejects_network_address(self):
         invalid = UBUNTU_CONFIG.read_text().replace("203.0.113.106/30", "203.0.113.104/30")
@@ -145,7 +152,10 @@ class OfflineContractTests(unittest.TestCase):
             self.assertIn("192.168.100.10", source)
             self.assertIn("rollback", source.lower())
         self.assertIn("--confirm-external", ubuntu)
+        self.assertIn("if ! id -nG", ubuntu)
         self.assertIn("ConfirmExternal", windows)
+        self.assertIn("Port ${sshPort}", windows)
+        self.assertIn("briefly disconnects every active peer", windows)
         self.assertNotIn("Invoke-Expression", windows)
 
     def test_repository_contains_no_embedded_private_key(self):

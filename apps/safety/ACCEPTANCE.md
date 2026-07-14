@@ -10,6 +10,7 @@
 - 公网入站渲染结果只有 WireGuard UDP；公网 SSH/RDP/SMB/WinRM 不开放。
 - SSH 禁用 root、密码和交互式口令认证，仅管理员组公钥可用。
 - Admin/Employee 使用不重叠的地址段，员工不能 SSH 或访问 BMC。
+- 默认 `strict` 出站策略不允许 UDP/443；只有显式选择 `staged` 才允许 QUIC/HTTP3。
 - BMC 固定为 `192.168.100.10`，从不分配公网地址。
 - `Apply` 要求本地控制台确认、先备份并启动 20 分钟自动回滚；`Confirm` 要求声明真实外部测试已通过。
 - 仓库不包含私钥、真实公网配置或运行时 peer 配置；交付包包含 SHA-256 清单。
@@ -38,6 +39,8 @@ python3 -m unittest -v apps/safety/tests/test_offline_contract.py
 | S10 | 持久化 | 边界设备和 Ubuntu 各重启一次后，防火墙默认拒绝、WireGuard、SSH 策略和路由保持 |
 | S11 | 日志和时间 | 系统时间正确；nftables/Windows Firewall、SSH、WireGuard、auditd 日志可采集且无私钥 |
 | S12 | 证据归档 | `Evidence` 输出、外部扫描结果、握手时间、拒绝测试、重启测试、配置哈希和接线照片归档 |
+
+Windows 现场还应在维护窗口执行一次测试 peer 的新增和吊销，确认 tunnel service 短暂重装后现有客户端能够自动重连，并把中断时长记入证据。
 
 建议从不在该 `/30` 内的外部网络运行 TCP 扫描，并分别用 Admin 与 Employee peer 测试。UDP 扫描常把 WireGuard 显示为 `open|filtered`，因此必须同时以服务端 `wg show` 的最新握手作为成功证据，不能只看扫描器结果。
 

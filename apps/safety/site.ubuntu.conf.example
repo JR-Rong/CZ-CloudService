@@ -30,8 +30,8 @@ TLS_CERT_PATH=/etc/cz-safety/tls/server.crt
 TLS_KEY_PATH=/etc/cz-safety/tls/server.key
 HTTPS_UPSTREAM=http://127.0.0.1:8080
 
-# staged/strict use a default-deny output chain with common update protocols;
-# audit permits output and is intended only for dependency discovery.
-EGRESS_MODE=staged
+# strict permits DNS/NTP over UDP and update traffic over TCP; staged also
+# permits UDP/443 for QUIC/HTTP3 discovery. audit permits unrestricted output.
+EGRESS_MODE=strict
 PACKAGE_MODE=skip
 ROLLBACK_MINUTES=20

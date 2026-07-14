@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_VERSION="1"
+SCRIPT_VERSION="2"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TARGET_ROOT="${CZ_SAFETY_ROOT:-/}"
 ACTION=""
@@ -100,7 +100,7 @@ set_defaults() {
   TLS_CERT_PATH="/etc/cz-safety/tls/server.crt"
   TLS_KEY_PATH="/etc/cz-safety/tls/server.key"
   HTTPS_UPSTREAM="http://127.0.0.1:8080"
-  EGRESS_MODE="staged"
+  EGRESS_MODE="strict"
   PACKAGE_MODE="skip"
   ROLLBACK_MINUTES="20"
 }
@@ -317,12 +317,14 @@ EOF
 }
 
 render_nftables() {
-  local admins employees bmc_mode output_policy
+  local admins employees bmc_mode output_policy udp_ports
   admins="$(csv_to_nft_set "$(peer_addresses admin)")"
   employees="$(csv_to_nft_set "$(peer_addresses employee)")"
   bmc_mode="$(resolved_bmc_mode)"
   output_policy="drop"
   [ "$EGRESS_MODE" = "audit" ] && output_policy="accept"
+  udp_ports="53, 123"
+  [ "$EGRESS_MODE" = "staged" ] && udp_ports="53, 123, 443"
   cat <<EOF
 #!/usr/sbin/nft -f
 flush ruleset
@@ -368,12 +370,12 @@ EOF
     type filter hook output priority filter; policy ${output_policy};
 EOF
   if [ "$output_policy" = "drop" ]; then
-    cat <<'EOF'
+    cat <<EOF
     ct state invalid drop
     ct state established,related accept
     oifname "lo" accept
     ip protocol icmp accept
-    udp dport { 53, 123, 443 } accept
+    udp dport { ${udp_ports} } accept
     tcp dport { 53, 80, 443 } accept
 EOF
   fi
@@ -677,7 +679,13 @@ prepare_admin_account() {
   if ! id "$SSH_ADMIN_USER" >/dev/null 2>&1; then
     useradd --create-home --shell /bin/bash "$SSH_ADMIN_USER"
   fi
-  usermod -aG "$SSH_ADMIN_GROUP",sudo "$SSH_ADMIN_USER"
+  local required_group
+  for required_group in "$SSH_ADMIN_GROUP" sudo; do
+    getent group "$required_group" >/dev/null || die "Required group not found: $required_group"
+    if ! id -nG "$SSH_ADMIN_USER" | tr ' ' '\n' | grep -Fxq "$required_group"; then
+      usermod -aG "$required_group" "$SSH_ADMIN_USER"
+    fi
+  done
   home="$(getent passwd "$SSH_ADMIN_USER" | awk -F: '{print $6}')"
   [ -n "$home" ] || die "Unable to resolve home directory for $SSH_ADMIN_USER"
   primary_group="$(id -gn "$SSH_ADMIN_USER")"
@@ -940,6 +948,8 @@ prepare_bundle() {
   validate_config
   [ "$(uname -s)" = Linux ] || die "prepare-bundle must run on a matching Ubuntu 24.04 host"
   [ "$(platform_status)" = PASS ] || die "prepare-bundle requires Ubuntu 24.04"
+  # Root is intentional: refresh the system apt indexes and resolve against the
+  # matching Ubuntu dpkg state instead of producing a best-effort partial set.
   [ "$(id -u)" -eq 0 ] || die "prepare-bundle must run as root"
   local out
   out="${OUTPUT_DIR:-$SCRIPT_DIR/offline-debs}"
@@ -969,7 +979,7 @@ BMC_GATEWAY_CIDR=192.168.100.1/24
 BMC_ADDRESS=192.168.100.10
 BMC_WEB_PORT=443
 ENABLE_HTTPS=no
-EGRESS_MODE=staged
+EGRESS_MODE=strict
 PACKAGE_MODE=skip
 EOF
   CONFIG_PATH="$config"
