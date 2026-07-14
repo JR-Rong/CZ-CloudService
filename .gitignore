@@ -22,6 +22,14 @@ tunnel_ed25519*
 # Local build cache for webdisk/File Browser one-click deployment
 .work/
 
+# CZ Safety runtime state, real site configs, secrets, evidence, and packages
+apps/safety/site.ubuntu.conf
+apps/safety/site.windows.json
+apps/safety/evidence/
+apps/safety/dist/
+apps/safety/offline-debs/
+apps/safety/runtime/
+
 # OS/editor noise
 .DS_Store
 Thumbs.db

@@ -1,0 +1,37 @@
+# Example only. Replace the TEST-NET public prefix at the IDC site.
+WAN_INTERFACE=eno1
+WAN_CIDR=203.0.113.106/30
+WAN_GATEWAY=203.0.113.105
+DNS_SERVERS=1.1.1.1,9.9.9.9
+
+WIREGUARD_INTERFACE=wg0
+WIREGUARD_ADDRESS=10.203.0.1/24
+WIREGUARD_PORT=51820
+ADMIN_VPN_CIDR=10.203.0.0/26
+EMPLOYEE_VPN_CIDR=10.203.0.128/25
+
+# auto disables BMC when BMC_INTERFACE is empty; routed expects the BMC
+# gateway to be 192.168.100.1; snat supports a BMC without a configurable route.
+BMC_MODE=auto
+BMC_INTERFACE=eno2
+BMC_GATEWAY_CIDR=192.168.100.1/24
+BMC_ADDRESS=192.168.100.10
+# Prefer 443. Use 80 only when the isolated BMC has no HTTPS support.
+BMC_WEB_PORT=443
+
+SSH_PORT=22
+SSH_ADMIN_GROUP=safety-admin
+SSH_ADMIN_USER=safetyops
+# Create this file onsite; it must contain the operator's public key only.
+SSH_ADMIN_PUBLIC_KEY_FILE=/root/cz-safety/admin_authorized_keys
+ENABLE_HTTPS=no
+HTTPS_PORT=443
+TLS_CERT_PATH=/etc/cz-safety/tls/server.crt
+TLS_KEY_PATH=/etc/cz-safety/tls/server.key
+HTTPS_UPSTREAM=http://127.0.0.1:8080
+
+# staged/strict use a default-deny output chain with common update protocols;
+# audit permits output and is intended only for dependency discovery.
+EGRESS_MODE=staged
+PACKAGE_MODE=skip
+ROLLBACK_MINUTES=20
