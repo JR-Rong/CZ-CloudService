@@ -16,6 +16,8 @@ OpenSSH-Win64.zip
 *.pem
 id_*
 tunnel_ed25519*
+admin_ed25519*
+bootstrap_ed25519*
 .env
 .env.*
 
@@ -29,6 +31,7 @@ apps/safety/evidence/
 apps/safety/dist/
 apps/safety/offline-debs/
 apps/safety/runtime/
+CZ-Safety-USB/
 
 # OS/editor noise
 .DS_Store

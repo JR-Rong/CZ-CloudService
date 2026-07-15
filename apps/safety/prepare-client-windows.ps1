@@ -7,12 +7,22 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
-if (-not $OutputDir) { $OutputDir = Join-Path $env:USERPROFILE "Desktop\CZ-Safety-USB" }
+if (-not $OutputDir) { $OutputDir = Join-Path $env:USERPROFILE "CZ-Safety-USB" }
 
 function Write-Step { param([string]$Message); Write-Host "`n$([char]0x2501)$([char]0x2501) $Message $([char]0x2501)$([char]0x2501)" -ForegroundColor Cyan }
 function Write-OK   { param([string]$Message); Write-Host "$([char]0x2713) $Message" -ForegroundColor Green }
 function Write-Warn { param([string]$Message); Write-Host "$([char]0x26A0) $Message" -ForegroundColor Yellow }
 function Write-Err  { param([string]$Message); Write-Host "$([char]0x2717) $Message" -ForegroundColor Red; exit 1 }
+
+function New-VerifiedEd25519Key {
+    param([string]$Path, [string]$Comment)
+    & $sshKeygen.Source -q -t ed25519 -f $Path -N '' -C $Comment
+    if ($LASTEXITCODE -ne 0) { throw "ssh-keygen failed while creating $Path" }
+    $derivedPublicKey = & $sshKeygen.Source -y -P '' -f $Path 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $derivedPublicKey) {
+        throw "generated key cannot be loaded with an empty passphrase: $Path"
+    }
+}
 
 # ── Prerequisites ──────────────────────────────────────────────
 Write-Step "检查本机工具"
@@ -29,12 +39,17 @@ $wgExe = Get-Command wg.exe -ErrorAction SilentlyContinue
 if ($wgExe) { Write-OK "WireGuard 已安装" }
 else { Write-Warn "WireGuard 未安装；部署完成后需要用它导入 peer 配置。下载：https://www.wireguard.com/install/" }
 
-if (Test-Path -LiteralPath $OutputDir) {
-    Write-Warn "$OutputDir 已存在，将在 5 秒后覆盖"
-    Start-Sleep -Seconds 5
+$OutputDir = [IO.Path]::GetFullPath($OutputDir)
+$dangerousOutputDirs = @(
+    [IO.Path]::GetPathRoot($OutputDir),
+    [IO.Path]::GetFullPath($env:USERPROFILE),
+    [IO.Path]::GetFullPath((Get-Location).Path)
+)
+if ($dangerousOutputDirs | Where-Object { [string]::Equals($_, $OutputDir, [StringComparison]::OrdinalIgnoreCase) }) {
+    Write-Err "拒绝危险输出目录：$OutputDir"
 }
-Remove-Item -LiteralPath $OutputDir -Recurse -Force -ErrorAction SilentlyContinue
-[void](New-Item -ItemType Directory -Path $OutputDir -Force)
+if (Test-Path -LiteralPath $OutputDir) { Write-Err "$OutputDir 已存在；脚本不会覆盖或删除现有目录，请换一个新目录" }
+[void](New-Item -ItemType Directory -Path $OutputDir)
 
 # ── SSH 密钥生成 ──────────────────────────────────────────────
 Write-Step "生成 SSH 密钥"
@@ -42,26 +57,26 @@ Write-Step "生成 SSH 密钥"
 $adminKeyName = "admin_ed25519"
 $bootstrapKeyName = "bootstrap_ed25519"
 
-$adminKeyDir = Join-Path $OutputDir "FOR-MY-MACHINE"
-[void](New-Item -ItemType Directory -Path $adminKeyDir -Force)
-
-$adminKeyPath = Join-Path $adminKeyDir $adminKeyName
 $userSshDir = Join-Path $env:USERPROFILE ".ssh"
+$adminKeyDir = $userSshDir
+[void](New-Item -ItemType Directory -Path $adminKeyDir -Force)
+$adminKeyPath = Join-Path $adminKeyDir $adminKeyName
 $userSshKey = Join-Path $userSshDir $adminKeyName
 
 if (Test-Path -LiteralPath $userSshKey) {
+    if (-not (Test-Path -LiteralPath "$userSshKey.pub")) { throw "existing Admin private key has no public key: $userSshKey.pub" }
     Write-OK "复用已有 Admin SSH 密钥：$userSshKey"
-    Copy-Item -LiteralPath $userSshKey          -Destination (Join-Path $adminKeyDir $adminKeyName) -Force
-    Copy-Item -LiteralPath "$userSshKey.pub"    -Destination (Join-Path $adminKeyDir "$adminKeyName.pub") -Force
 } else {
-    & ssh-keygen.exe -t ed25519 -f $adminKeyPath -N '""' -C "admin@cz-safety-$(Get-Date -Format yyyyMMdd)"
-    Write-OK "已生成 Admin SSH 密钥对"
+    New-VerifiedEd25519Key $adminKeyPath "admin@cz-safety-$((Get-Date).ToUniversalTime().ToString('yyyyMMdd'))"
+    Write-OK "已在本机生成 Admin SSH 密钥对（不会写入 USB 或 Desktop）"
 }
+$adminFingerprint = & $sshKeygen.Source -lf "$adminKeyPath.pub" 2>&1
+if ($LASTEXITCODE -ne 0 -or $adminFingerprint -notmatch 'ED25519') { throw "Admin key must be Ed25519: $adminKeyPath" }
 
 $bootstrapKeyDir = Join-Path $OutputDir "FOR-WINDOWS-BASTION"
 [void](New-Item -ItemType Directory -Path $bootstrapKeyDir -Force)
 $bootstrapKeyPath = Join-Path $bootstrapKeyDir $bootstrapKeyName
-& ssh-keygen.exe -t ed25519 -f $bootstrapKeyPath -N '""' -C "bootstrap@cz-safety-$(Get-Date -Format yyyyMMdd)"
+New-VerifiedEd25519Key $bootstrapKeyPath "bootstrap@cz-safety-$((Get-Date).ToUniversalTime().ToString('yyyyMMdd'))"
 Write-OK "已生成 Bootstrap SSH 密钥对（仅 Windows 跳板拓扑使用）"
 
 # ── Ubuntu 直连服务器配置 ─────────────────────────────────────
@@ -71,10 +86,10 @@ $ubuntuDir = Join-Path $OutputDir "FOR-UBUNTU-SERVER"
 [void](New-Item -ItemType Directory -Path $ubuntuDir -Force)
 
 Copy-Item -LiteralPath (Join-Path $ScriptDir "site.ubuntu.conf.example") -Destination (Join-Path $ubuntuDir "site.ubuntu.conf") -Force
-Copy-Item -LiteralPath (Join-Path $adminKeyDir "$adminKeyName.pub")      -Destination (Join-Path $ubuntuDir "admin_authorized_keys") -Force
+Copy-Item -LiteralPath "$adminKeyPath.pub" -Destination (Join-Path $ubuntuDir "admin_authorized_keys") -Force
 Write-OK "已复制 Ubuntu 配置模板，请编辑 $(Join-Path $ubuntuDir 'site.ubuntu.conf') 填入真实公网地址和接口名"
 
-$adminPubKeyContent = Get-Content -LiteralPath (Join-Path $adminKeyDir "$adminKeyName.pub") -Raw
+$adminPubKeyContent = Get-Content -LiteralPath "$adminKeyPath.pub" -Raw
 
 # ── Windows 跳板配置 ──────────────────────────────────────────
 Write-Step "准备 Windows 跳板部署材料"
@@ -83,12 +98,12 @@ $winDir = Join-Path $OutputDir "FOR-WINDOWS-BASTION"
 [void](New-Item -ItemType Directory -Path $winDir -Force)
 
 if ($python3) {
-    $pythonScript = @"
+    $pythonScript = @'
 import json, sys, pathlib
-template_path = pathlib.Path(r'$(Join-Path $ScriptDir "site.windows.json.example")')
-output_path   = pathlib.Path(r'$(Join-Path $winDir "site.windows.json")')
-admin_pub     = r'''$adminPubKeyContent'''.strip()
-bootstrap_dir = pathlib.Path(r'$bootstrapKeyDir')
+template_path = pathlib.Path(sys.argv[1])
+output_path = pathlib.Path(sys.argv[2])
+admin_pub = sys.argv[3].strip()
+bootstrap_dir = pathlib.Path(sys.argv[4])
 
 site = json.loads(template_path.read_text())
 site.setdefault('_comment', {})
@@ -96,10 +111,12 @@ site['_comment']['adminPublicKey'] = admin_pub
 site['_comment']['bootstrapPublicKey'] = str(bootstrap_dir / 'bootstrap_ed25519.pub')
 site['_comment']['bootstrapPrivateKeyForWindows'] = str(bootstrap_dir / 'bootstrap_ed25519')
 output_path.write_text(json.dumps(site, indent=2, ensure_ascii=False) + '\n')
-"@
-    $pythonScript | & $python3.Source -
+'@
+    $pythonScript | & $python3.Source - (Join-Path $ScriptDir "site.windows.json.example") (Join-Path $winDir "site.windows.json") $adminPubKeyContent $bootstrapKeyDir
+    if ($LASTEXITCODE -ne 0) { throw "failed to populate site.windows.json" }
 } else {
     Copy-Item -LiteralPath (Join-Path $ScriptDir "site.windows.json.example") -Destination (Join-Path $winDir "site.windows.json") -Force
+    Write-Warn "site.windows.json 已直接复制；_comment 中的公钥和 bootstrap 路径提示未自动填写，请手动核对"
 }
 
 @'
@@ -115,86 +132,28 @@ Write-OK "已复制 Windows 配置模板，请编辑 $(Join-Path $winDir 'site.w
 Write-Step "生成 USB 说明文件"
 
 $genTime = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-
-@"
-═══════════════════════════════════════════════════════════════════
-  CZ Safety 现场部署 USB 包
-  生成时间：$genTime
-═══════════════════════════════════════════════════════════════════
-
-本 U 盘包含三个目录：
-
-  FOR-MY-MACHINE/        留在你的电脑上，不要带到服务器
-  ├── admin_ed25519       管理员 SSH 私钥（绝不离手）
-  └── admin_ed25519.pub   管理员 SSH 公钥
-
-  FOR-UBUNTU-SERVER/      用于"Ubuntu 直接接公网"拓扑
-  ├── site.ubuntu.conf    现场配置（先编辑真实 IP！）
-  └── admin_authorized_keys  管理员公钥
-
-  FOR-WINDOWS-BASTION/    用于"Windows 跳板"拓扑
-  ├── site.windows.json   现场配置（先编辑真实 IP！）
-  ├── bootstrap_ed25519   Ubuntu 初始化私钥（放到 Windows）
-  ├── bootstrap_ed25519.pub Ubuntu 初始化公钥（放到 Ubuntu）
-  └── known_hosts         主机指纹（到场核验后填写）
-
-── 部署前必须做的事 ──────────────────────────────────────────
-
-1. 编辑对应拓扑的配置文件，把 example 地址换成 IDC 分配的真实地址：
-   • 公网 /30 地址（.105 网关 / .106 本方）
-   • 物理网卡名称（Windows: Get-NetAdapter 查看；Ubuntu: ip link 查看）
-   • 其他按需调整
-
-2. 如果是 Windows 跳板拓扑，提前在 Windows 上安装：
-   • WireGuard for Windows（https://www.wireguard.com/install/）
-   • 安装后在配置中填写正确的 wireguardExe / wgExe 路径
-
-3. 如果现场没有互联网，提前在一台 全新 Ubuntu 24.04 上运行：
-   sudo ./deploy-ubuntu-direct.sh prepare-bundle --config site.ubuntu.conf --output-dir offline-debs
-   把生成的 offline-debs/ 目录一起放到 U 盘。
-
-── 到场后的执行顺序 ──────────────────────────────────────────
-
-Ubuntu 直连：
-  1. Ubuntu 控制台：sudo install -d -m 0700 /root/cz-safety
-  2. 插入 U 盘，sudo install -m 0600 .../admin_authorized_keys /root/cz-safety/
-  3. sudo ./deploy-ubuntu-direct.sh preflight --config site.ubuntu.conf
-  4. sudo ./deploy-ubuntu-direct.sh plan     --config site.ubuntu.conf | less
-  5. sudo ./deploy-ubuntu-direct.sh apply    --config site.ubuntu.conf --confirm-console
-  6. sudo /usr/local/sbin/deploy-ubuntu-direct.sh peer-add --name onsite-admin --role admin
-  7. 把 .../exports/onsite-admin.conf 拷回 U 盘
-  8. 在你的电脑上导入 WireGuard 配置，从外部测试
-  9. sudo ... confirm --confirm-external
-
-Windows 跳板：
-  1. Ubuntu 控制台：创建 safety-bootstrap 用户、导入公钥、配置免交互 sudo
-     （详见 apps/safety/README.md）
-  2. Windows：把 bootstrap_ed25519 放到配置指定的路径
-  3. Windows：从 LAN 侧核验 Ubuntu 主机指纹并填写 known_hosts
-  4. PowerShell：.\deploy-windows-bastion.ps1 -Action Preflight -Config site.windows.json
-  5. 依次 Plan → Apply -ConfirmConsole → PeerAdd → 外部测试 → Confirm -ConfirmExternal
-
-⚠ 重要提醒
-  • 私钥绝不提交到仓库
-  • 部署前拔掉公网线，先完成 Ubuntu 基线恢复
-  • 20 分钟自动回滚，请在窗口内完成外部测试
-  • 工控机 BMC 默认不向公网开放
-"@ | Set-Content -LiteralPath (Join-Path $OutputDir "README.txt") -Encoding UTF8
+$templatePath = Join-Path $ScriptDir "usb-readme.template.txt"
+$readme = Get-Content -LiteralPath $templatePath -Raw
+$readme = $readme.Replace("{{GENERATED_AT_UTC}}", $genTime)
+$readme = $readme.Replace("{{ADMIN_PRIVATE_KEY_PATH}}", $adminKeyPath)
+if ($readme -match '\{\{|\}\}') { throw "unresolved placeholder in USB README template" }
+$readme | Set-Content -LiteralPath (Join-Path $OutputDir "README.txt") -Encoding UTF8
 
 # ── 最终输出 ──────────────────────────────────────────────────
 Write-Step "准备完成"
 
 Write-Host ""
 Write-Host "  USB 目录：$OutputDir"
+Write-Host "  Admin 私钥（不在 USB 中）：$adminKeyPath"
 Write-Host ""
 Write-Host "  目录结构："
 Get-ChildItem -LiteralPath $OutputDir -Recurse -File | ForEach-Object { "    " + $_.FullName.Replace($OutputDir, "") }
 Write-Host ""
 Write-Host "  管理员 SSH 公钥指纹："
-& ssh-keygen.exe -lf (Join-Path $adminKeyDir "$adminKeyName.pub")
+& $sshKeygen.Source -lf "$adminKeyPath.pub"
 Write-Host ""
 Write-Host "  Bootstrap SSH 公钥指纹："
-& ssh-keygen.exe -lf (Join-Path $bootstrapKeyDir "$bootstrapKeyName.pub")
+& $sshKeygen.Source -lf "$bootstrapKeyPath.pub"
 Write-Host ""
 Write-Host "  ═══════════════════════════════════════════════════"
 Write-Host "  下一步："

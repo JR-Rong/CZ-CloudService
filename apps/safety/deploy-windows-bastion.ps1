@@ -16,7 +16,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
-$ScriptVersion = 2
+$ScriptVersion = 3
 $ScriptPath = $MyInvocation.MyCommand.Path
 $ScriptDir = Split-Path -Parent $ScriptPath
 $IsWindowsPlatform = $env:OS -eq "Windows_NT"
@@ -167,9 +167,6 @@ function Validate-SiteConfig {
     $gateway = ConvertTo-IPv4UInt32 ([string]$public.gateway)
     if ($gateway -ne ($wan.NetworkValue + 1)) { Throw-Config "public.gateway must be the first usable address" }
     if ($wan.AddressValue -ne ($wan.NetworkValue + 2)) { Throw-Config "public.cidr must use the second usable address" }
-    if (($wan.AddressValue -band 255) -ne 106 -or ($gateway -band 255) -ne 105) {
-        Throw-Config "the assigned public block must use .105 as gateway and .106 as host"
-    }
 
     $vpnAddress = Get-CidrInfo ([string]$vpn.address)
     $admin = Get-CidrInfo ([string]$vpn.adminCidr)
@@ -474,6 +471,10 @@ function Invoke-SelfTest {
     $rejected = $false
     try { [void](Validate-SiteConfig $invalid) } catch { $rejected = $true }
     Assert-SelfTest $rejected "network address was accepted"
+    $alternate = $sample | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+    $alternate.public.cidr = "198.51.100.10/30"
+    $alternate.public.gateway = "198.51.100.9"
+    Assert-SelfTest (Validate-SiteConfig $alternate) "valid /30 with different final octets was rejected"
     Write-Info "self-test PASS"
 }
 
@@ -681,6 +682,13 @@ function Invoke-Apply {
     if (-not (Test-Path -LiteralPath ([string]$Site.server.knownHostsPath))) { throw "Verified Ubuntu known_hosts file not found" }
     if (-not (Test-Path -LiteralPath ([string]$Site.wireguard.wireguardExe)) -or -not (Test-Path -LiteralPath ([string]$Site.wireguard.wgExe))) {
         throw "WireGuard for Windows is not installed at the configured paths"
+    }
+    $foreignInboundAllowCount = @(
+        Get-NetFirewallRule -Enabled True -Direction Inbound -Action Allow -ErrorAction SilentlyContinue |
+            Where-Object { $_.Group -ne $FirewallGroup }
+    ).Count
+    if ($foreignInboundAllowCount -gt 0) {
+        Write-Warning "Apply will disable $foreignInboundAllowCount enabled inbound Allow rules outside CZ-Safety across all firewall profiles; the rollback backup restores them"
     }
     Ensure-Directory $RuntimeRoot -Secret
     $id = Backup-WindowsState $Site

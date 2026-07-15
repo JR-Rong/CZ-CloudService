@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_VERSION="2"
+SCRIPT_VERSION="3"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TARGET_ROOT="${CZ_SAFETY_ROOT:-/}"
 ACTION=""
@@ -43,6 +43,10 @@ Options:
 
 Mutating actions never read secrets from the repository. Runtime keys are kept
 under /etc/cz-safety/secrets and exported client configs contain private keys.
+
+Exit status:
+  preflight returns 0 for PASS/PENDING states and 2 for BLOCKED. Its JSON
+  status field is authoritative. Configuration and execution errors return 1.
 EOF
 }
 
@@ -198,8 +202,6 @@ if gateway != hosts[0]:
     raise SystemExit(f"WAN_GATEWAY must be the first usable address ({hosts[0]})")
 if wan_if.ip != hosts[1]:
     raise SystemExit(f"WAN_CIDR must use the second usable address ({hosts[1]})")
-if wan_if.ip.packed[-1] != 106 or gateway.packed[-1] != 105:
-    raise SystemExit("The assigned /30 must use .105 as gateway and .106 as host")
 if wg_if.ip not in admin:
     raise SystemExit("WIREGUARD_ADDRESS must fall inside ADMIN_VPN_CIDR")
 if not admin.subnet_of(wg_if.network) or not employee.subnet_of(wg_if.network):
@@ -235,11 +237,19 @@ PY
 
 csv_to_nft_set() {
   local csv="$1"
-  if [ -z "$csv" ]; then
-    printf ' '
-  else
-    printf '%s' "$csv" | tr ',' '\n' | awk 'NF {gsub(/[[:space:]]/, ""); printf "%s%s", sep, $0; sep=", "}'
+  [ -n "$(trim "$csv")" ] || return 0
+  printf '%s' "$csv" | tr ',' '\n' | awk 'NF {gsub(/[[:space:]]/, ""); printf "%s%s", sep, $0; sep=", "}'
+}
+
+render_nft_set() {
+  local name="$1" elements
+  elements="$(csv_to_nft_set "$2")"
+  printf '  set %s {\n' "$name"
+  printf '    type ipv4_addr\n'
+  if [ -n "$elements" ]; then
+    printf '    elements = { %s }\n' "$elements"
   fi
+  printf '  }\n'
 }
 
 peers_file() {
@@ -317,9 +327,7 @@ EOF
 }
 
 render_nftables() {
-  local admins employees bmc_mode output_policy udp_ports
-  admins="$(csv_to_nft_set "$(peer_addresses admin)")"
-  employees="$(csv_to_nft_set "$(peer_addresses employee)")"
+  local bmc_mode output_policy udp_ports
   bmc_mode="$(resolved_bmc_mode)"
   output_policy="drop"
   [ "$EGRESS_MODE" = "audit" ] && output_policy="accept"
@@ -330,15 +338,11 @@ render_nftables() {
 flush ruleset
 
 table inet cz_safety {
-  set admin_peers {
-    type ipv4_addr
-    elements = {${admins}}
-  }
-
-  set employee_peers {
-    type ipv4_addr
-    elements = {${employees}}
-  }
+EOF
+  render_nft_set admin_peers "$(peer_addresses admin)"
+  printf '\n'
+  render_nft_set employee_peers "$(peer_addresses employee)"
+  cat <<EOF
 
   chain input {
     type filter hook input priority filter; policy drop;
@@ -962,7 +966,7 @@ prepare_bundle() {
 
 self_test() {
   require_command python3
-  local temp config plan invalid
+  local temp config plan invalid alternate nft_file nft_output
   temp="$(mktemp -d)"
   config="$temp/site.conf"
   cat > "$config" <<'EOF'
@@ -992,6 +996,17 @@ EOF
   grep -q '192.168.100.10' "$plan" || die "self-test: BMC address missing"
   grep -q 'PasswordAuthentication no' "$plan" || die "self-test: SSH password hardening missing"
   grep -q 'udp dport 51820 accept' "$plan" || die "self-test: WireGuard WAN rule missing"
+  nft_file="$temp/nftables.conf"
+  render_nftables > "$nft_file"
+  grep -Fq 'elements = { }' "$nft_file" && die "self-test: empty nftables elements declaration rendered"
+  if command -v nft >/dev/null 2>&1; then
+    if ! nft_output="$(nft -c -f "$nft_file" 2>&1)"; then
+      case "$nft_output" in
+        *'Operation not permitted'*|*'Permission denied'*) warn "self-test: nft is installed but CAP_NET_ADMIN is unavailable; syntax check skipped" ;;
+        *) die "self-test: nftables syntax validation failed: $nft_output" ;;
+      esac
+    fi
+  fi
   invalid="$temp/invalid.conf"
   sed 's/WAN_CIDR=203.0.113.106\/30/WAN_CIDR=203.0.113.104\/30/' "$config" > "$invalid"
   CONFIG_PATH="$invalid"
@@ -999,6 +1014,12 @@ EOF
   if validate_config >/dev/null 2>&1; then
     die "self-test: network address was accepted"
   fi
+  alternate="$temp/alternate.conf"
+  sed -e 's#WAN_CIDR=203.0.113.106/30#WAN_CIDR=198.51.100.10/30#' \
+      -e 's/WAN_GATEWAY=203.0.113.105/WAN_GATEWAY=198.51.100.9/' "$config" > "$alternate"
+  CONFIG_PATH="$alternate"
+  load_config
+  validate_config
   CONFIG_PATH="$config"
   load_config
   rm -rf "$temp"
