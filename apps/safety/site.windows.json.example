@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "topology": "windows-bastion",
+  "public": {
+    "interfaceAlias": "Ethernet WAN",
+    "cidr": "203.0.113.106/30",
+    "gateway": "203.0.113.105",
+    "wireguardPort": 51820
+  },
+  "vpn": {
+    "interfaceName": "CZ-Safety-WG",
+    "address": "10.203.0.1/24",
+    "adminCidr": "10.203.0.0/26",
+    "employeeCidr": "10.203.0.128/25"
+  },
+  "server": {
+    "lanInterfaceAlias": "Ethernet LAN",
+    "gatewayCidr": "10.203.10.1/24",
+    "address": "10.203.10.10",
+    "linuxInterface": "eno1",
+    "sshPort": 22,
+    "httpsPort": 443,
+    "bootstrapUser": "safety-bootstrap",
+    "bootstrapKeyPath": "C:\\CZ-Safety\\bootstrap_ed25519",
+    "knownHostsPath": "C:\\CZ-Safety\\known_hosts"
+  },
+  "bmc": {
+    "mode": "flat-bmc",
+    "gatewayCidr": "192.168.100.1/24",
+    "address": "192.168.100.10",
+    "webScheme": "https"
+  },
+  "wireguard": {
+    "wireguardExe": "C:\\Program Files\\WireGuard\\wireguard.exe",
+    "wgExe": "C:\\Program Files\\WireGuard\\wg.exe"
+  },
+  "packageMode": "skip",
+  "rollbackMinutes": 20
+}

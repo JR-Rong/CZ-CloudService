@@ -14,6 +14,7 @@ CZ CloudService stores deployment guides, client scripts, and future UI code for
 - `scripts/ai-stack/` - AI server status, smoke test, rebalance, context, and rollback helpers.
 - `examples/frp/` - Safe example FRP configuration files with placeholders only.
 - `apps/ui/` - Reserved for future UI work.
+- `apps/safety/` - Standalone physical-server edge security project (WireGuard, firewall, SSH hardening, rollback, and onsite acceptance). It is independent of FRP.
 
 ## Windows FRP SSH Client
 
