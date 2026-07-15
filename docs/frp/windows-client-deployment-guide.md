@@ -19,8 +19,12 @@ ssh -p 2222 admin@60.205.213.254
 Windows 客户端：
 
 - 本地 OpenSSH Server 监听：`127.0.0.1:22222`
+- 内网 Qwen3.6 LLM 服务：`192.168.100.12:8000`
+- 内网 AI Chat Web 服务：`192.168.100.12:9999`
 - frpc 连接 ECS：`60.205.213.254:7000`
 - frpc 转发规则：`remotePort 2222 -> localPort 22222`
+- frpc 转发规则：`remotePort 9000 -> 192.168.100.12:8000`
+- frpc 转发规则：`remotePort 9999 -> 192.168.100.12:9999`
 
 最终访问路径：
 
@@ -65,7 +69,10 @@ transport.tls.force = true
 transport.tcpMux = false
 
 allowPorts = [
-  { start = 2222, end = 2222 }
+  { start = 2222, end = 2222 },
+  { start = 2444, end = 2444 },
+  { start = 9000, end = 9000 },
+  { start = 9999, end = 9999 }
 ]
 ```
 
@@ -209,6 +216,20 @@ type = "tcp"
 localIP = "127.0.0.1"
 localPort = 22222
 remotePort = 2222
+
+[[proxies]]
+name = "ai-llm-qwen36-9000"
+type = "tcp"
+localIP = "192.168.100.12"
+localPort = 8000
+remotePort = 9000
+
+[[proxies]]
+name = "ai-chat-web-9999"
+type = "tcp"
+localIP = "192.168.100.12"
+localPort = 9999
+remotePort = 9999
 ```
 
 自动启动选项：
@@ -216,6 +237,7 @@ remotePort = 2222
 - `-CreateStartupShortcut`：在当前用户的 Startup 文件夹创建快捷方式。只有这个用户登录后才会启动 `frpc`。
 - `-RegisterScheduledTask -ScheduledTaskTrigger AtLogon`：为当前用户创建任务计划程序登录触发器，方便用 `Get-ScheduledTask` 检查，不改变原来的快捷方式行为。
 - `-RegisterScheduledTask -ScheduledTaskTrigger AtStartup`：创建 `SYSTEM` 启动触发器，需要管理员 PowerShell。这个模式建议把 `-InstallDir` 放到 `C:\ProgramData\CZ-CloudService\frpc` 这类 `SYSTEM` 可读目录。
+- `-RestartExistingDetached`：通过当前 `2222` FRP SSH 会话更新 `frpc.toml` 时使用。它先写配置，再启动一个延迟后台重启脚本，避免当前 SSH 命令在停掉旧 `frpc` 后来不及启动新进程。
 
 当前用户任务计划示例：
 
@@ -224,6 +246,16 @@ powershell -ExecutionPolicy Bypass -File .\scripts\windows\setup-frpc.ps1 `
   -AuthToken "<填 ECS /etc/frp/frps.toml 里相同的 token>" `
   -RegisterScheduledTask `
   -ScheduledTaskTrigger AtLogon
+```
+
+如果是通过 `ssh -p 2222 admin@60.205.213.254` 远程执行更新，使用 detached 重启：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\setup-frpc.ps1 `
+  -AuthToken "<填 ECS /etc/frp/frps.toml 里相同的 token>" `
+  -SkipLocalPortCheck `
+  -CheckLlmPort `
+  -RestartExistingDetached
 ```
 
 检查任务：
@@ -247,6 +279,7 @@ Get-Process frpc -ErrorAction SilentlyContinue | Stop-Process -Force
 ```text
 login to server success
 proxy added: [ai-station-windows-ssh-2222]
+proxy added: [ai-llm-qwen36-9000]
 start proxy success
 ```
 
@@ -475,6 +508,7 @@ Windows 端：
 Get-Service sshd
 Get-NetTCPConnection -LocalPort 22222
 ssh -p 22222 admin@127.0.0.1 hostname
+Invoke-WebRequest http://192.168.100.12:8000/health -UseBasicParsing
 
 cd C:\Users\chuan\todesk-ssh
 .\frp_0.69.1_windows_amd64\frpc.exe -c .\frpc.toml
@@ -483,14 +517,28 @@ cd C:\Users\chuan\todesk-ssh
 ECS 端：
 
 ```bash
-ssh root@60.205.213.254 'systemctl status frps --no-pager -l; ss -tlnp | grep -E "(:7000|:2222)([[:space:]]|$)"'
+ssh root@60.205.213.254 'systemctl status frps --no-pager -l; ss -tlnp | grep -E "(:7000|:2222|:9000|:9999)([[:space:]]|$)"'
 ```
 
 公网端：
 
 ```bash
 ssh -p 2222 admin@60.205.213.254 hostname
+curl --noproxy '*' -i http://60.205.213.254:9000/health
+curl --noproxy '*' -i http://60.205.213.254:9999/health
 ```
+
+如果 ECS 本机访问 `127.0.0.1:9000/health` 已经返回 HTTP 200，但公网
+`curl http://60.205.213.254:9000/health` 失败，不要继续改 Windows
+`frpc.toml`。先在 ECS 上抓包确认公网请求有没有到达网卡：
+
+```bash
+ssh root@60.205.213.254 'curl --noproxy "*" -i http://127.0.0.1:9000/health'
+ssh root@60.205.213.254 'timeout 12 tcpdump -nni any tcp port 9000 -tttt -vv -c 10'
+```
+
+本机 `127.0.0.1:9000` 成功但抓不到公网请求包，说明 `frps -> frpc -> LLM`
+已经通了，剩余问题在阿里云安全组或 EIP 公网入口的 `9000/tcp` 放行。
 
 ## 9. 成功标准
 
@@ -498,7 +546,11 @@ ssh -p 2222 admin@60.205.213.254 hostname
 
 ```text
 Windows: ssh -p 22222 admin@127.0.0.1 hostname 成功
+Windows: Invoke-WebRequest http://192.168.100.12:8000/health 成功
+Windows: Invoke-WebRequest http://192.168.100.12:9999/health 成功
 Windows: frpc 日志显示 login to server success / start proxy success
-ECS: ss 能看到 frps 监听 *:7000 和 *:2222
+ECS: ss 能看到 frps 监听 *:7000、*:2222、*:9000 和 *:9999
 公网: ssh -p 2222 admin@60.205.213.254 hostname 成功
+公网: curl http://60.205.213.254:9000/health 返回 HTTP 200
+公网: curl http://60.205.213.254:9999/health 返回 HTTP 200
 ```

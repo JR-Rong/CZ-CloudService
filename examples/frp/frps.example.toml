@@ -12,5 +12,8 @@ log.level = "info"
 log.maxDays = 7
 
 allowPorts = [
-  { start = 2222, end = 2222 }
+  { start = 2222, end = 2222 },
+  { start = 2444, end = 2444 },
+  { start = 9000, end = 9000 },
+  { start = 9999, end = 9999 }
 ]

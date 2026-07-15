@@ -4,7 +4,7 @@ set -euo pipefail
 APPLY="no"
 FRP_VERSION="${FRP_VERSION:-0.69.1}"
 BIND_PORT="${FRPS_BIND_PORT:-7000}"
-ALLOW_PORTS="${FRPS_ALLOW_PORTS:-2222}"
+ALLOW_PORTS="${FRPS_ALLOW_PORTS:-2222,2444,9000,9999}"
 INSTALL_BIN="${FRPS_BIN:-/usr/local/bin/frps}"
 CONFIG_PATH="${FRPS_CONFIG:-/etc/frp/frps.toml}"
 SERVICE_PATH="${FRPS_SERVICE:-/etc/systemd/system/frps.service}"
@@ -31,7 +31,7 @@ trap cleanup_tmpdir EXIT
 usage() {
   cat <<'EOF'
 Usage:
-  setup-frps.sh [--apply] [--token-file PATH] [--bind-port 7000] [--allow-ports 2222[,2223|3000-3010]]
+  setup-frps.sh [--apply] [--token-file PATH] [--bind-port 7000] [--allow-ports 2222,2444,9000,9999[,3000-3010]]
 
 Installs or reuses frps 0.69.1 on Ubuntu/systemd, writes:
   /etc/frp/frps.toml
@@ -44,7 +44,7 @@ Environment overrides:
   FRP_VERSION=0.69.1
   FRPS_AUTH_TOKEN=<runtime-token>
   FRPS_BIND_PORT=7000
-  FRPS_ALLOW_PORTS=2222
+  FRPS_ALLOW_PORTS=2222,2444,9000,9999
   FRPS_BIN=/usr/local/bin/frps
   FRPS_CONFIG=/etc/frp/frps.toml
   FRPS_SERVICE=/etc/systemd/system/frps.service
