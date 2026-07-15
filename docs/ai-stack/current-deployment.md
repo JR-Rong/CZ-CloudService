@@ -1,6 +1,6 @@
 # AI Server Current Deployment
 
-Last verified: 2026-06-24 CST
+Last verified: 2026-06-30 CST
 
 This document records the current deployment on the AI server reached through:
 
@@ -31,6 +31,7 @@ Runtime host:
 | `8002` | `ai-speech` | GPU2 environment | enabled, active | SenseVoiceSmall speech recognition |
 | `8188` | `ai-comfy` | GPU3 | enabled, active | Primary ComfyUI instance |
 | `8189` | `ai-comfy-gpu2` | GPU2 | enabled, active | Secondary ComfyUI instance |
+| `9999` | `ai-chat-web` | none | enabled, active | Browser chat UI and server-side Qwen3.6 proxy |
 
 ## Qwen3.6 Runtime Configuration
 
@@ -76,27 +77,59 @@ Current active model endpoints:
 | `8000` | `qwen3.6-35b-a3b` | `Qwen/Qwen3.6-35B-A3B-FP8` |
 | `8002` | `iic/SenseVoiceSmall` | `iic/SenseVoiceSmall` |
 
+Public FRP endpoint:
+
+| Public endpoint | Windows-side target | Purpose |
+| --- | --- | --- |
+| `60.205.213.254:9000` | `192.168.100.12:8000` | Qwen3.6 OpenAI-compatible API and `/health` |
+| `60.205.213.254:9999` | `192.168.100.12:9999` | AI Chat Web UI and `/health` |
+
 Current ComfyUI model files observed:
 
 | Model file | Approx size | Path under ComfyUI models |
 | --- | ---: | --- |
 | `sd_xl_base_1.0.safetensors` | 6.46 GiB | `checkpoints/` |
+| `Juggernaut-XL_v9_RunDiffusionPhoto_v2.safetensors` | 6.62 GiB | `checkpoints/` |
 | `wan2.2_ti2v_5B_fp16.safetensors` | 9.31 GiB | `diffusion_models/` |
+| `wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors` | 13.31 GiB | `diffusion_models/` |
+| `wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors` | 13.31 GiB | `diffusion_models/` |
+| `wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors` | 13.32 GiB | `diffusion_models/` |
+| `wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors` | 13.32 GiB | `diffusion_models/` |
+| `wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors` | 1.14 GiB | `loras/` |
+| `wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors` | 1.14 GiB | `loras/` |
+| `wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors` | 1.14 GiB | `loras/` |
+| `wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors` | 1.14 GiB | `loras/` |
 | `umt5_xxl_fp8_e4m3fn_scaled.safetensors` | 6.27 GiB | `text_encoders/` |
 | `wan2.2_vae.safetensors` | 1.31 GiB | `vae/` |
+| `wan_2.1_vae.safetensors` | 242 MiB | `vae/` |
+
+`ai-chat-web` currently defaults media generation to:
+
+```bash
+AI_CHAT_IMAGE_CHECKPOINT=Juggernaut-XL_v9_RunDiffusionPhoto_v2.safetensors
+AI_CHAT_VIDEO_MODEL_PROFILE=wan22-14b-lightx2v
+AI_CHAT_MEDIA_TIMEOUT_SECONDS=1800
+```
 
 ## Last Verified Health
 
-After raising Qwen3.6 to 128K, the following checks passed:
+After enabling the high-quality ComfyUI workflows, the following checks passed:
 
 ```text
 8000 /health -> 200
 8000 /v1/models -> qwen3.6-35b-a3b
-8000 text smoke -> answered "2"
-8000 image smoke -> answered "白色"
 8002 /health -> 200
 8188 / -> 200
 8189 / -> 200
+8188 object_info/CheckpointLoaderSimple -> Juggernaut XL v9 listed
+8189 object_info/UNETLoader -> Wan2.2 T2V/I2V 14B high/low UNets listed
+8189 object_info/LoraLoaderModelOnly -> Wan2.2 Lightx2v T2V/I2V LoRAs listed
+8189 object_info/VAELoader -> wan_2.1_vae.safetensors listed
+9999 /health -> 200
+9999 text-to-image smoke -> completed in 19.56s
+9999 text-to-video smoke -> completed in 35.24s
+9999 image-to-video smoke -> completed in 4.66s
+9999 keyframes-to-video smoke -> completed in 1.69s
 8001 /health -> connection refused, expected because ai-vlm is disabled
 ```
 

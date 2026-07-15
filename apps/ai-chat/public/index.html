@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CZ AI Chat</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="聊天记录">
+        <div class="brand-row">
+          <div class="brand-mark">AI</div>
+          <div>
+            <div class="brand-title">CZ AI Chat</div>
+            <div class="brand-subtitle">qwen private gateway</div>
+          </div>
+        </div>
+        <button class="primary-action" id="new-chat" type="button">
+          <span aria-hidden="true">+</span>
+          新聊天
+        </button>
+        <nav class="studio-mode-list" aria-label="工作区">
+          <button class="studio-mode-button active" type="button" data-studio-mode="chat">
+            <span>聊天</span>
+            <small>Qwen 私有网关</small>
+          </button>
+          <button class="studio-mode-button" type="button" data-studio-mode="image">
+            <span>生图</span>
+            <small>自动选择文生图、图生图或持续改图</small>
+          </button>
+          <button class="studio-mode-button" type="button" data-studio-mode="video">
+            <span>生视频</span>
+            <small>自动选择文生视频、图生视频或关键帧</small>
+          </button>
+        </nav>
+        <label class="search-box">
+          <span aria-hidden="true">⌕</span>
+          <input id="conversation-search" type="search" placeholder="搜索聊天记录" autocomplete="off" />
+        </label>
+        <div class="history-toolbar">
+          <button id="export-all" type="button">导出全部</button>
+          <button id="clear-unpinned" type="button">清理未收藏</button>
+        </div>
+        <nav class="conversation-list" id="conversation-list"></nav>
+      </aside>
+
+      <main class="chat-panel">
+        <header class="chat-header">
+          <div>
+            <h1 id="active-title">新聊天</h1>
+            <div class="chat-meta" id="chat-meta">上下文 0 tokens · 未压缩</div>
+          </div>
+          <div class="header-actions">
+            <div class="top-tabs" role="tablist" aria-label="模式">
+              <button class="top-tab active" type="button" data-studio-mode="chat">聊天</button>
+              <button class="top-tab" type="button" data-studio-mode="image">生图</button>
+              <button class="top-tab" type="button" data-studio-mode="video">生视频</button>
+            </div>
+            <button class="icon-button" id="rename-chat" type="button" title="重命名">T</button>
+            <button class="icon-button" id="pin-chat" type="button" title="收藏">☆</button>
+            <button class="icon-button danger" id="delete-chat" type="button" title="删除">×</button>
+          </div>
+        </header>
+
+        <section class="messages" id="messages" aria-live="polite"></section>
+
+        <section class="media-panel" id="media-panel" aria-label="媒体生成">
+          <div class="media-panel-head">
+            <div>
+              <div class="media-eyebrow" id="media-eyebrow">生图</div>
+              <h2 id="media-title">按对话持续生成和修改图片</h2>
+            </div>
+            <div class="media-status" id="media-status">等待任务</div>
+          </div>
+
+          <div class="media-results" id="media-results" aria-live="polite"></div>
+
+          <form class="media-form" id="image-form" data-media-form="image">
+            <input id="image-mode" type="hidden" value="text-to-image" />
+            <div class="auto-route-bar" id="image-route-bar" aria-live="polite"></div>
+            <div class="reference-row" id="image-reference-row" aria-live="polite"></div>
+            <div class="media-grid">
+              <label>
+                参考图
+                <input id="image-input" type="file" accept="image/*" />
+              </label>
+              <label class="media-check">
+                <input id="image-use-last" type="checkbox" />
+                使用上一张结果
+              </label>
+            </div>
+            <textarea id="image-prompt" rows="2" placeholder="描述想要生成或修改的图片"></textarea>
+            <details class="media-advanced" open>
+              <summary>高级参数</summary>
+              <div class="media-advanced-grid">
+                <label class="wide-field">
+                  负向提示词
+                  <textarea id="image-negative-prompt" rows="2" placeholder="不想出现的内容，例如低质量、水印、畸变"></textarea>
+                </label>
+                <label>
+                  宽度
+                  <input id="image-width" type="number" min="256" max="1536" step="64" value="832" />
+                </label>
+                <label>
+                  高度
+                  <input id="image-height" type="number" min="256" max="1536" step="64" value="1216" />
+                </label>
+                <label>
+                  Steps
+                  <input id="image-steps" type="number" min="1" max="80" step="1" value="30" />
+                </label>
+                <label>
+                  CFG
+                  <input id="image-cfg" type="number" min="1" max="20" step="0.1" value="7" />
+                </label>
+                <label>
+                  Seed
+                  <input id="image-seed" type="number" min="0" step="1" placeholder="随机" />
+                </label>
+                <label>
+                  采样器
+                  <select id="image-sampler">
+                    <option value="">服务端默认</option>
+                    <option value="dpmpp_2m_sde" selected>DPM++ 2M SDE</option>
+                    <option value="dpmpp_2m">DPM++ 2M</option>
+                    <option value="euler">Euler</option>
+                    <option value="euler_ancestral">Euler a</option>
+                  </select>
+                </label>
+                <label>
+                  Scheduler
+                  <select id="image-scheduler">
+                    <option value="">服务端默认</option>
+                    <option value="karras" selected>Karras</option>
+                    <option value="normal">Normal</option>
+                    <option value="simple">Simple</option>
+                  </select>
+                </label>
+              </div>
+            </details>
+            <div class="media-actions">
+              <button class="ghost-button" id="clear-media-results" type="button">清空结果</button>
+              <button class="send-button" id="image-submit" type="submit">生成图片</button>
+            </div>
+          </form>
+
+          <form class="media-form hidden" id="video-form" data-media-form="video">
+            <input id="video-mode" type="hidden" value="text-to-video" />
+            <div class="auto-route-bar" id="video-route-bar" aria-live="polite"></div>
+            <div class="reference-row" id="video-reference-row" aria-live="polite"></div>
+            <div class="media-grid">
+              <label>
+                首帧图
+                <input id="video-image-input" type="file" accept="image/*" />
+              </label>
+              <label>
+                关键帧
+                <input id="video-keyframes" type="file" accept="image/*" multiple />
+              </label>
+            </div>
+            <textarea id="video-prompt" rows="2" placeholder="描述想要生成的视频运动、镜头和风格"></textarea>
+            <details class="media-advanced" open>
+              <summary>高级参数</summary>
+              <div class="media-advanced-grid">
+                <label>
+                  质量档
+                  <select id="video-quality-profile">
+                    <option value="">服务端默认</option>
+                    <option value="wan22-5b-ti2v">Wan2.2 5B TI2V</option>
+                    <option value="wan22-14b-lightx2v">Wan2.2 14B Lightx2v</option>
+                  </select>
+                </label>
+                <label class="wide-field">
+                  负向提示词
+                  <textarea id="video-negative-prompt" rows="2" placeholder="不想出现的内容，例如抖动、模糊、变形、文字"></textarea>
+                </label>
+                <label>
+                  宽度
+                  <input id="video-width" type="number" min="128" max="1024" step="32" value="512" />
+                </label>
+                <label>
+                  高度
+                  <input id="video-height" type="number" min="128" max="1024" step="32" value="512" />
+                </label>
+                <label>
+                  帧数
+                  <input id="video-length" type="number" min="1" max="129" step="4" value="49" />
+                </label>
+                <label>
+                  Steps
+                  <input id="video-steps" type="number" min="1" max="40" step="1" value="4" />
+                </label>
+                <label>
+                  CFG
+                  <input id="video-cfg" type="number" min="1" max="20" step="0.1" value="1" />
+                </label>
+                <label>
+                  FPS
+                  <input id="video-fps" type="number" min="1" max="60" step="1" value="16" />
+                </label>
+                <label>
+                  Seed
+                  <input id="video-seed" type="number" min="0" step="1" placeholder="随机" />
+                </label>
+              </div>
+            </details>
+            <div class="media-actions">
+              <span class="media-hint">文生视频、图生视频、关键帧生视频</span>
+              <button class="send-button" id="video-submit" type="submit">生成视频</button>
+            </div>
+          </form>
+        </section>
+
+        <form class="composer" id="composer">
+          <div class="composer-topline">
+            <span id="model-label">qwen3.6-35b-a3b</span>
+            <span id="stream-state">流式输出已开启</span>
+          </div>
+          <textarea id="prompt" rows="3" placeholder="输入消息，Enter 发送，Shift + Enter 换行"></textarea>
+          <div class="composer-actions">
+            <button class="ghost-button" id="manual-compress" type="button">压缩上下文</button>
+            <div class="spacer"></div>
+            <button class="ghost-button" id="stop-stream" type="button" disabled>停止</button>
+            <button class="send-button" id="send-button" type="submit">发送</button>
+          </div>
+        </form>
+      </main>
+
+      <aside class="inspector" aria-label="设置">
+        <section class="inspector-section">
+          <h2>连接</h2>
+          <div class="status-row">
+            <span>网页端口</span>
+            <strong>9999</strong>
+          </div>
+          <div class="status-row">
+            <span>模型</span>
+            <strong id="model-status">加载中</strong>
+          </div>
+          <div class="status-row">
+            <span>API Key</span>
+            <strong id="key-status">server-side</strong>
+          </div>
+          <div class="token-panel hidden" id="token-panel">
+            <label>
+              访问令牌
+              <input id="access-token" type="password" placeholder="AI_CHAT_WEB_TOKEN" />
+            </label>
+            <button id="save-token" type="button">保存令牌</button>
+          </div>
+        </section>
+
+        <section class="inspector-section">
+          <h2>生成</h2>
+          <label class="toggle-row">
+            <span>思考模式</span>
+            <input id="toggle-thinking" type="checkbox" checked />
+          </label>
+          <label class="toggle-row">
+            <span>流式输出</span>
+            <input id="toggle-stream" type="checkbox" checked />
+          </label>
+          <label class="toggle-row">
+            <span>自动压缩</span>
+            <input id="toggle-compress" type="checkbox" checked />
+          </label>
+          <label class="toggle-row">
+            <span>联网搜索</span>
+            <input id="toggle-web-search" type="checkbox" />
+          </label>
+          <div class="helper-text" id="web-search-status">默认不联网</div>
+          <label class="field-row">
+            <span>温度</span>
+            <input id="temperature" type="number" min="0" max="2" step="0.1" value="0.7" />
+          </label>
+          <label class="field-row">
+            <span>最大输出</span>
+            <input id="max-tokens" type="number" min="128" max="8192" step="128" value="2048" />
+          </label>
+        </section>
+
+        <section class="inspector-section">
+          <h2>上下文</h2>
+          <div class="meter">
+            <div class="meter-bar"><span id="context-bar"></span></div>
+            <div class="meter-label" id="context-label">0 / 120000</div>
+          </div>
+          <label class="field-row">
+            <span>压缩阈值</span>
+            <input id="context-limit" type="number" min="4096" max="200000" step="1024" />
+          </label>
+          <div class="summary-box" id="summary-box">暂无压缩摘要</div>
+        </section>
+
+        <section class="inspector-section">
+          <h2>记录</h2>
+          <button class="wide-button" id="export-chat" type="button">导出当前聊天</button>
+          <button class="wide-button danger" id="clear-chat" type="button">清空当前消息</button>
+        </section>
+      </aside>
+    </div>
+    <script src="/app.js"></script>
+  </body>
+</html>

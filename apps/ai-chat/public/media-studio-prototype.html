@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CZ AI Studio Prototype</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="media-studio-prototype.css" />
+  </head>
+  <body>
+    <div class="studio-shell">
+      <aside class="mode-rail" aria-label="工作区">
+        <div class="brand">
+          <div class="brand-mark">AI</div>
+          <div>
+            <div class="brand-title">CZ AI Studio</div>
+            <div class="brand-note">ComfyUI media workspace</div>
+          </div>
+        </div>
+
+        <nav class="mode-list" aria-label="模式切换">
+          <button class="mode-button active" type="button" data-mode="chat">
+            <span>聊天</span>
+            <small>Qwen 私有网关</small>
+          </button>
+          <button class="mode-button" type="button" data-mode="image">
+            <span>生图</span>
+            <small>文生图 / 图生图 / 持续改图</small>
+          </button>
+          <button class="mode-button" type="button" data-mode="video">
+            <span>生视频</span>
+            <small>文生视频 / 图生视频 / 关键帧</small>
+          </button>
+        </nav>
+
+        <div class="thread-list" aria-label="最近任务">
+          <div class="section-label">最近</div>
+          <button class="thread-pill active" type="button" data-mode="image">全身人物概念图</button>
+          <button class="thread-pill" type="button" data-mode="video">产品发布短片</button>
+          <button class="thread-pill" type="button" data-mode="chat">模型选型讨论</button>
+        </div>
+      </aside>
+
+      <main class="thread-panel">
+        <header class="thread-header">
+          <div>
+            <div class="eyebrow" id="mode-eyebrow">聊天</div>
+            <h1 id="thread-title">和模型一起完成任务</h1>
+          </div>
+          <div class="top-tabs" role="tablist" aria-label="模式">
+            <button class="top-tab active" type="button" data-mode="chat">聊天</button>
+            <button class="top-tab" type="button" data-mode="image">生图</button>
+            <button class="top-tab" type="button" data-mode="video">生视频</button>
+          </div>
+        </header>
+
+        <section class="conversation" id="conversation" aria-live="polite"></section>
+
+        <form class="composer" id="composer">
+          <div class="composer-context" id="composer-context">当前上下文：普通聊天</div>
+          <div class="auto-route-bar" id="auto-route-bar" aria-live="polite"></div>
+          <div class="reference-row" id="reference-row" aria-live="polite"></div>
+          <div class="composer-advanced" id="composer-advanced"></div>
+          <textarea id="prompt" rows="3" placeholder="输入需求或修改意见"></textarea>
+          <div class="composer-actions">
+            <button class="secondary-button" id="attach-reference" type="button">添加参考</button>
+            <button class="secondary-button" id="reuse-current" type="button">沿用当前结果</button>
+            <button class="secondary-button" id="add-keyframes" type="button">添加关键帧</button>
+            <button class="primary-button" type="submit">发送</button>
+          </div>
+        </form>
+      </main>
+
+      <aside class="asset-panel" aria-label="当前资产">
+        <div class="section-label">当前结果</div>
+        <div class="asset-preview" id="asset-preview"></div>
+
+        <div class="control-group">
+          <div class="control-title">模型</div>
+          <div class="model-stack" id="model-stack"></div>
+        </div>
+
+        <div class="control-group">
+          <div class="control-title">生成设置</div>
+          <div class="setting-grid" id="setting-grid"></div>
+        </div>
+
+        <div class="control-group">
+          <div class="control-title">高级选项</div>
+          <div class="advanced-grid" id="advanced-grid"></div>
+        </div>
+
+        <div class="control-group">
+          <div class="control-title">版本</div>
+          <div class="version-list" id="version-list"></div>
+        </div>
+      </aside>
+    </div>
+
+    <script src="media-studio-prototype.js"></script>
+  </body>
+</html>

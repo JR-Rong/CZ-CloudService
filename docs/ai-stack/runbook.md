@@ -136,6 +136,16 @@ intentionally want to start a disabled service such as `ai-vlm.service`.
 | `8002 /health` | `200` |
 | `8188 /` | `200` |
 | `8189 /` | `200` |
+| `9999 /health` | `200` |
+
+Public FRP exposure:
+
+| Public endpoint | Windows-side target | Expected result |
+| --- | --- | --- |
+| `http://60.205.213.254:9000/health` | `192.168.100.12:8000/health` | HTTP `200` after Windows `frpc` registers `ai-llm-qwen36-9000` |
+| `http://60.205.213.254:9000/v1/models` | `192.168.100.12:8000/v1/models` | Requires the runtime API key |
+| `http://60.205.213.254:9999/health` | `192.168.100.12:9999/health` | HTTP `200` after Windows `frpc` registers `ai-chat-web-9999` |
+| `http://60.205.213.254:9999/` | `192.168.100.12:9999/` | Browser AI Chat Web UI |
 
 ## Troubleshooting Notes
 
@@ -144,3 +154,8 @@ intentionally want to start a disabled service such as `ai-vlm.service`.
 - If startup is slow, check `journalctl -u ai-llm.service -f`.
 - If ComfyUI uses little GPU memory at idle, that is normal; model weights are loaded when a workflow runs.
 - If `8001` is down, that is expected in the current architecture.
+- If ECS local `curl --noproxy '*' -i http://127.0.0.1:9000/health` returns
+  HTTP `200` but external `curl http://60.205.213.254:9000/health` fails, run
+  `tcpdump -nni any tcp port 9000` on ECS during the external request. No
+  captured packets means the cloud security group or EIP ingress for `9000/tcp`
+  is still blocking before the request reaches `frps`.
