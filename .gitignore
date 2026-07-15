@@ -2,6 +2,9 @@
 *.log
 frpc.toml
 frps.toml
+apps/ui/data/
+apps/ui/runtime/
+agent-platform/runtime/
 
 # Downloaded archives and extracted binaries
 *.zip

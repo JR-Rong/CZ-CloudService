@@ -18,3 +18,24 @@ type = "tcp"
 localIP = "127.0.0.1"
 localPort = 22222
 remotePort = 2222
+
+[[proxies]]
+name = "hermes-agent-web-2444"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 3080
+remotePort = 2444
+
+[[proxies]]
+name = "ai-llm-qwen36-9000"
+type = "tcp"
+localIP = "192.168.100.12"
+localPort = 8000
+remotePort = 9000
+
+[[proxies]]
+name = "ai-chat-web-9999"
+type = "tcp"
+localIP = "192.168.100.12"
+localPort = 9999
+remotePort = 9999

@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Configures a Windows frpc client for exposing local OpenSSH through an ECS frps server.
+Configures a Windows frpc client for exposing local OpenSSH, the Hermes Agent web app, the AI LLM API, and the AI chat web app through an ECS frps server.
 
 .DESCRIPTION
 This script downloads frpc if needed, verifies the local SSH service, writes frpc.toml,
@@ -29,6 +29,27 @@ param(
     [int]$LocalPort = 22222,
     [int]$RemotePort = 2222,
 
+    [string]$AgentWebProxyName = "",
+    [string]$AgentWebLocalIP = "127.0.0.1",
+    [int]$AgentWebLocalPort = 3080,
+    [int]$AgentWebRemotePort = 2444,
+    [switch]$DisableAgentWebProxy,
+    [switch]$CheckAgentWebPort,
+
+    [string]$LlmProxyName = "",
+    [string]$LlmLocalIP = "192.168.100.12",
+    [int]$LlmLocalPort = 8000,
+    [int]$LlmRemotePort = 9000,
+    [switch]$DisableLlmProxy,
+    [switch]$CheckLlmPort,
+
+    [string]$AiChatWebProxyName = "",
+    [string]$AiChatWebLocalIP = "192.168.100.12",
+    [int]$AiChatWebLocalPort = 9999,
+    [int]$AiChatWebRemotePort = 9999,
+    [switch]$DisableAiChatWebProxy,
+    [switch]$CheckAiChatWebPort,
+
     [string]$InstallDir = "$env:USERPROFILE\todesk-ssh",
     [string]$FrpVersion = "0.69.1",
     [string]$FrpZipUrl = "",
@@ -39,6 +60,8 @@ param(
     [switch]$NoStart,
     [switch]$CreateStartupShortcut,
     [switch]$RegisterScheduledTask,
+    [switch]$RestartExistingDetached,
+    [int]$RestartDelaySeconds = 5,
     [ValidateSet("AtLogon", "AtStartup")]
     [string]$ScheduledTaskTrigger = "AtLogon",
     [string]$ScheduledTaskName = "CZ CloudService frpc",
@@ -133,6 +156,84 @@ function Stop-ExistingFrpc {
     }
 }
 
+function Convert-ToPowerShellSingleQuotedLiteral {
+    param([string]$Value)
+
+    if ($null -eq $Value) {
+        return ""
+    }
+
+    return $Value.Replace("'", "''")
+}
+
+function Start-DetachedFrpcRestart {
+    param(
+        [string]$TargetInstallDir,
+        [string]$TargetFrpcExe,
+        [string]$TargetConfigPath,
+        [int]$DelaySeconds
+    )
+
+    $restartPath = Join-Path $TargetInstallDir "restart-frpc-delayed.ps1"
+    $restartLog = Join-Path $TargetInstallDir "restart-frpc-delayed.log"
+    $restartScript = @'
+$ErrorActionPreference = "Stop"
+
+function Write-RestartLog {
+    param([string]$Message)
+    "$(Get-Date -Format o) $Message" | Add-Content -Encoding ascii -LiteralPath '__RESTART_LOG__'
+}
+
+function Stop-ExistingFrpc {
+    param([string]$TargetInstallDir)
+
+    $normalized = [System.IO.Path]::GetFullPath($TargetInstallDir).TrimEnd('\')
+    foreach ($process in (Get-Process frpc -ErrorAction SilentlyContinue)) {
+        if ($process.Path -and $process.Path.StartsWith($normalized, [System.StringComparison]::OrdinalIgnoreCase)) {
+            Write-RestartLog "Stopping frpc process $($process.Id)"
+            Stop-Process -Id $process.Id -Force
+        }
+    }
+}
+
+$TargetInstallDir = '__TARGET_INSTALL_DIR__'
+$TargetFrpcExe = '__TARGET_FRPC_EXE__'
+$TargetConfigPath = '__TARGET_CONFIG_PATH__'
+
+Start-Sleep -Seconds $DelaySeconds
+try {
+    Stop-ExistingFrpc -TargetInstallDir $TargetInstallDir
+    Start-Sleep -Seconds 2
+    $process = Start-Process -FilePath $TargetFrpcExe -ArgumentList "-c `"$TargetConfigPath`"" -WorkingDirectory $TargetInstallDir -WindowStyle Minimized -PassThru
+    Start-Sleep -Seconds 2
+    if ($process.HasExited) {
+        Write-RestartLog "frpc exited quickly after delayed restart"
+        exit 1
+    }
+    Write-RestartLog "frpc restarted with PID $($process.Id)"
+}
+catch {
+    Write-RestartLog "restart failed: $($_.Exception.Message)"
+    exit 1
+}
+finally {
+    Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
+}
+'@
+
+    $restartScript = $restartScript.Replace("__RESTART_LOG__", (Convert-ToPowerShellSingleQuotedLiteral $restartLog))
+    $restartScript = $restartScript.Replace("__TARGET_INSTALL_DIR__", (Convert-ToPowerShellSingleQuotedLiteral $TargetInstallDir))
+    $restartScript = $restartScript.Replace("__TARGET_FRPC_EXE__", (Convert-ToPowerShellSingleQuotedLiteral $TargetFrpcExe))
+    $restartScript = $restartScript.Replace("__TARGET_CONFIG_PATH__", (Convert-ToPowerShellSingleQuotedLiteral $TargetConfigPath))
+    $restartScript = $restartScript.Replace('$DelaySeconds', [string]$DelaySeconds)
+
+    Set-Content -LiteralPath $restartPath -Encoding ascii -Value $restartScript
+    Start-Process -FilePath 'powershell' `
+        -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $restartPath) `
+        -WindowStyle Hidden | Out-Null
+    Write-Step "Scheduled delayed detached frpc restart in $DelaySeconds second(s). Log: $restartLog"
+}
+
 function Register-FrpcTask {
     param(
         [string]$TaskName,
@@ -165,7 +266,7 @@ function Register-FrpcTask {
     else {
         $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
         $trigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
-        $principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel LeastPrivilege
+        $principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Limited
     }
 
     $settings = New-ScheduledTaskSettingsSet `
@@ -195,6 +296,15 @@ function Register-FrpcTask {
 if ([string]::IsNullOrWhiteSpace($ProxyName)) {
     $ProxyName = "windows-ssh-$RemotePort"
 }
+if ([string]::IsNullOrWhiteSpace($AgentWebProxyName)) {
+    $AgentWebProxyName = "hermes-agent-web-$AgentWebRemotePort"
+}
+if ([string]::IsNullOrWhiteSpace($LlmProxyName)) {
+    $LlmProxyName = "ai-llm-qwen36-$LlmRemotePort"
+}
+if ([string]::IsNullOrWhiteSpace($AiChatWebProxyName)) {
+    $AiChatWebProxyName = "ai-chat-web-$AiChatWebRemotePort"
+}
 
 $InstallDir = [Environment]::ExpandEnvironmentVariables($InstallDir)
 if (-not [System.IO.Path]::IsPathRooted($InstallDir)) {
@@ -216,6 +326,31 @@ if (-not $SkipLocalPortCheck) {
     if (-not (Test-TcpPort -HostName $LocalIP -Port $LocalPort)) {
         throw "Local SSH service is not reachable at $LocalIP`:$LocalPort. Start Windows OpenSSH first, or rerun with -SkipLocalPortCheck."
     }
+}
+
+if ((-not $DisableAgentWebProxy) -and $CheckAgentWebPort) {
+    Write-Step "Checking Hermes Agent web app at $AgentWebLocalIP`:$AgentWebLocalPort"
+    if (-not (Test-TcpPort -HostName $AgentWebLocalIP -Port $AgentWebLocalPort)) {
+        throw "Hermes Agent web app is not reachable at $AgentWebLocalIP`:$AgentWebLocalPort. Start the app first, or omit -CheckAgentWebPort."
+    }
+}
+
+if ((-not $DisableLlmProxy) -and $CheckLlmPort) {
+    Write-Step "Checking AI LLM service at $LlmLocalIP`:$LlmLocalPort"
+    if (-not (Test-TcpPort -HostName $LlmLocalIP -Port $LlmLocalPort)) {
+        throw "AI LLM service is not reachable at $LlmLocalIP`:$LlmLocalPort. Start ai-llm.service first, or omit -CheckLlmPort."
+    }
+}
+
+if ((-not $DisableAiChatWebProxy) -and $CheckAiChatWebPort) {
+    Write-Step "Checking AI chat web app at $AiChatWebLocalIP`:$AiChatWebLocalPort"
+    if (-not (Test-TcpPort -HostName $AiChatWebLocalIP -Port $AiChatWebLocalPort)) {
+        throw "AI chat web app is not reachable at $AiChatWebLocalIP`:$AiChatWebLocalPort. Start ai-chat-web.service first, or omit -CheckAiChatWebPort."
+    }
+}
+
+if ($RestartExistingDetached -and $NoStart) {
+    throw "-RestartExistingDetached cannot be combined with -NoStart."
 }
 
 if (-not (Test-Path $frpcExe)) {
@@ -283,6 +418,42 @@ localPort = $LocalPort
 remotePort = $RemotePort
 "@
 
+if (-not $DisableAgentWebProxy) {
+    $config += @"
+
+[[proxies]]
+name = $(Convert-ToTomlString $AgentWebProxyName)
+type = "tcp"
+localIP = $(Convert-ToTomlString $AgentWebLocalIP)
+localPort = $AgentWebLocalPort
+remotePort = $AgentWebRemotePort
+"@
+}
+
+if (-not $DisableLlmProxy) {
+    $config += @"
+
+[[proxies]]
+name = $(Convert-ToTomlString $LlmProxyName)
+type = "tcp"
+localIP = $(Convert-ToTomlString $LlmLocalIP)
+localPort = $LlmLocalPort
+remotePort = $LlmRemotePort
+"@
+}
+
+if (-not $DisableAiChatWebProxy) {
+    $config += @"
+
+[[proxies]]
+name = $(Convert-ToTomlString $AiChatWebProxyName)
+type = "tcp"
+localIP = $(Convert-ToTomlString $AiChatWebLocalIP)
+localPort = $AiChatWebLocalPort
+remotePort = $AiChatWebRemotePort
+"@
+}
+
 $config | Set-Content -Encoding ascii $configPath
 
 if ($CreateStartupShortcut -or $RegisterScheduledTask) {
@@ -307,20 +478,25 @@ if ($RegisterScheduledTask) {
     Write-Step "Registered Scheduled Task '$ScheduledTaskName' with trigger $ScheduledTaskTrigger"
 }
 
-if ($StopExisting) {
-    Stop-ExistingFrpc -TargetInstallDir $InstallDir
+if ($RestartExistingDetached) {
+    Start-DetachedFrpcRestart -TargetInstallDir $InstallDir -TargetFrpcExe $frpcExe -TargetConfigPath $configPath -DelaySeconds $RestartDelaySeconds
 }
-
-if (-not $NoStart) {
-    Write-Step "Starting frpc"
-    $process = Start-Process -FilePath $frpcExe -ArgumentList "-c `"$configPath`"" -WorkingDirectory $InstallDir -WindowStyle Minimized -PassThru
-    Start-Sleep -Seconds 2
-
-    if ($process.HasExited) {
-        Write-Warning "frpc exited quickly. Check $logPath for details."
+else {
+    if ($StopExisting) {
+        Stop-ExistingFrpc -TargetInstallDir $InstallDir
     }
-    else {
-        Write-Step "frpc started with PID $($process.Id)"
+
+    if (-not $NoStart) {
+        Write-Step "Starting frpc"
+        $process = Start-Process -FilePath $frpcExe -ArgumentList "-c `"$configPath`"" -WorkingDirectory $InstallDir -WindowStyle Minimized -PassThru
+        Start-Sleep -Seconds 2
+
+        if ($process.HasExited) {
+            Write-Warning "frpc exited quickly. Check $logPath for details."
+        }
+        else {
+            Write-Step "frpc started with PID $($process.Id)"
+        }
     }
 }
 
@@ -329,6 +505,18 @@ Write-Host "Next checks:"
 Write-Host "  1. Windows local SSH: ssh -p $LocalPort admin@$LocalIP hostname"
 Write-Host "  2. ECS listener:       ssh root@$ServerAddr 'ss -tlnp | grep $RemotePort'"
 Write-Host "  3. Public SSH:         ssh -p $RemotePort admin@$ServerAddr hostname"
+if (-not $DisableAgentWebProxy) {
+    Write-Host "  4. Local web app:      Invoke-WebRequest http://$AgentWebLocalIP`:$AgentWebLocalPort/ -UseBasicParsing"
+    Write-Host "  5. Public web app:     curl -i http://$ServerAddr`:$AgentWebRemotePort/"
+}
+if (-not $DisableLlmProxy) {
+    Write-Host "  6. Local LLM health:   Invoke-WebRequest http://$LlmLocalIP`:$LlmLocalPort/health -UseBasicParsing"
+    Write-Host "  7. Public LLM health:  curl -i http://$ServerAddr`:$LlmRemotePort/health"
+}
+if (-not $DisableAiChatWebProxy) {
+    Write-Host "  8. Local AI web:       Invoke-WebRequest http://$AiChatWebLocalIP`:$AiChatWebLocalPort/health -UseBasicParsing"
+    Write-Host "  9. Public AI web:      curl -i http://$ServerAddr`:$AiChatWebRemotePort/"
+}
 if ($RegisterScheduledTask) {
-    Write-Host "  4. Scheduled Task:     Get-ScheduledTask -TaskName `"$ScheduledTaskName`""
+    Write-Host "  10. Scheduled Task:    Get-ScheduledTask -TaskName `"$ScheduledTaskName`""
 }

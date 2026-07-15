@@ -7,6 +7,8 @@ It intentionally uses placeholders and runtime token input only.
 
 ```text
 external ssh client -> cloud ECS:2222 -> frps -> Windows frpc -> 127.0.0.1:22222 sshd
+external HTTP client -> cloud ECS:9000 -> frps -> Windows frpc -> 192.168.100.12:8000 ai-llm
+external browser -> cloud ECS:9999 -> frps -> Windows frpc -> 192.168.100.12:9999 ai-chat-web
 ```
 
 Required cloud listeners:
@@ -15,8 +17,11 @@ Required cloud listeners:
 | --- | --- | --- |
 | `7000/tcp` | `frps` | FRP control connection from Windows `frpc` |
 | `2222/tcp` | `frps` | Public SSH proxy registered by Windows `frpc` |
+| `9000/tcp` | `frps` | Public Qwen3.6 LLM proxy registered by Windows `frpc` |
+| `9999/tcp` | `frps` | Public AI chat web UI registered by Windows `frpc` |
 
-`2222` appears only after the Windows client connects and registers the proxy.
+`2222`, `9000`, and `9999` appear only after the Windows client connects and
+registers the matching proxies.
 
 ## Safe Inputs
 
@@ -77,16 +82,19 @@ transport.tls.force = true
 transport.tcpMux = false
 
 allowPorts = [
-  { start = 2222, end = 2222 }
+  { start = 2222, end = 2222 },
+  { start = 2444, end = 2444 },
+  { start = 9000, end = 9000 },
+  { start = 9999, end = 9999 }
 ]
 ```
 
-To allow an additional Windows client, choose a different remote port and update
-both `allowPorts` and the cloud security group:
+To allow an additional Windows client or service, choose a different remote port
+and update both `allowPorts` and the cloud security group:
 
 ```bash
 FRPS_AUTH_TOKEN="<runtime-token>" \
-  bash scripts/cloud/setup-frps.sh --allow-ports 2222,2223 --apply
+  bash scripts/cloud/setup-frps.sh --allow-ports 2222,2444,9000,9999,2223 --apply
 ```
 
 ## Cloud Security Group
@@ -97,10 +105,13 @@ Minimum inbound rules:
 | --- | --- | --- |
 | `7000/tcp` | Windows client public IP, or restricted operator IP range | Required for `frpc` control connection |
 | `2222/tcp` | Operator public IP `/32` when possible | Public SSH proxy |
+| `9000/tcp` | Operator or application source IPs where possible | Public Qwen3.6 LLM proxy |
+| `9999/tcp` | Operator or company source IPs where possible | Public AI chat web UI |
 
-Avoid leaving `2222/tcp` open to `0.0.0.0/0`. FRP plus SSH looks similar to a
-reverse-shell pattern to cloud security products, so keep the source CIDRs
-narrow and rotate the token if it was exposed.
+Avoid leaving `2222/tcp` or model API ports open to `0.0.0.0/0` unless there is
+no alternative. FRP plus SSH looks similar to a reverse-shell pattern to cloud
+security products, so keep the source CIDRs narrow and rotate the token if it
+was exposed.
 
 ## Verification
 
@@ -110,7 +121,7 @@ Run on the cloud host after apply:
 systemctl is-enabled frps
 systemctl is-active frps
 /usr/local/bin/frps --version
-ss -tlnp | grep -E '(:7000|:2222)([[:space:]]|$)' || true
+ss -tlnp | grep -E '(:7000|:2222|:9000|:9999)([[:space:]]|$)' || true
 journalctl -u frps.service -n 80 --no-pager
 ```
 
@@ -123,18 +134,35 @@ active
 *:7000  frps
 ```
 
-Expected after Windows `frpc` connects and registers `remotePort = 2222`:
+Expected after Windows `frpc` connects and registers `remotePort = 2222` and
+`remotePort = 9000`:
 
 ```text
 *:7000  frps
 *:2222  frps
+*:9000  frps
 ```
 
 End-to-end check from an external machine:
 
 ```bash
 ssh -p 2222 admin@<cloud-public-ip> hostname
+curl --noproxy '*' -i http://<cloud-public-ip>:9000/health
 ```
+
+If the ECS host itself can reach the LLM proxy but an external machine cannot,
+separate FRP health from cloud ingress:
+
+```bash
+curl --noproxy '*' -i http://127.0.0.1:9000/health
+sudo timeout 12 tcpdump -nni any tcp port 9000 -tttt -vv -c 10
+```
+
+`127.0.0.1:9000` returning HTTP 200 proves `frps -> frpc -> LLM` works. If the
+external `curl` still fails while `tcpdump` captures no packets for port `9000`,
+the request is not reaching the ECS network interface; check the cloud security
+group or EIP ingress rule for `9000/tcp` before changing `frpc` or the model
+service.
 
 ## Restart and Rollback
 

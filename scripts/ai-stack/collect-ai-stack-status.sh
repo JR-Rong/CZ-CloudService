@@ -35,7 +35,7 @@ section "GPU Processes"
 nvidia-smi --query-compute-apps=gpu_uuid,pid,process_name,used_memory --format=csv,noheader,nounits 2>/dev/null || true
 
 section "Systemd Services"
-for svc in ai-llm ai-vlm ai-speech ai-comfy ai-comfy-gpu2; do
+for svc in ai-llm ai-vlm ai-speech ai-comfy ai-comfy-gpu2 ai-chat-web; do
   printf '%s active=%s enabled=%s mainpid=%s\n' \
     "$svc" \
     "$(systemctl is-active "$svc.service" 2>/dev/null || true)" \
@@ -49,7 +49,8 @@ for url in \
   "http://${HOST}:8001/health" \
   "http://${HOST}:8002/health" \
   "http://${HOST}:8188/" \
-  "http://${HOST}:8189/"; do
+  "http://${HOST}:8189/" \
+  "http://${HOST}:9999/health"; do
   printf '%s -> %s\n' "$url" "$(curl_code "$url")"
 done
 

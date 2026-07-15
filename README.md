@@ -8,13 +8,16 @@ CZ CloudService stores deployment guides, client scripts, and future UI code for
 - `docs/webdisk/` - File Browser web disk deployment and operations docs.
 - `docs/operations/` - Port and autostart inventory across FRP, SSH, and AI services.
 - `docs/ai-stack/` - AI server GPU layout, model deployment, and operations runbooks.
+- `docs/agent-platform/` - Hermes Agent management platform design and deployment docs.
 - `scripts/cloud/` - Cloud server deployment helpers.
 - `scripts/windows/` - Windows client automation scripts.
 - `scripts/unix/` - macOS/Linux deployment helpers.
 - `scripts/ai-stack/` - AI server status, smoke test, rebalance, context, and rollback helpers.
 - `examples/frp/` - Safe example FRP configuration files with placeholders only.
-- `apps/ui/` - Reserved for future UI work.
+- `apps/ui/` - Hermes Agent management web app.
+- `apps/ai-chat/` - Browser chat UI and server-side gateway for the private LLM.
 - `apps/safety/` - Standalone physical-server edge security project (WireGuard, firewall, SSH hardening, rollback, and onsite acceptance). It is independent of FRP.
+- `agent-platform/` - Operator entrypoints for Hermes image contract checks.
 
 ## Windows FRP SSH Client
 
@@ -85,6 +88,18 @@ then restarts the `2233` web disk service through the lower-level
 
 Never commit real FRP tokens, SSH private keys, subscription links, or generated `frpc.toml` / `frps.toml` files. Use `examples/frp/*.example.toml` as templates and provide secrets at runtime.
 
+## Hermes Agent Platform
+
+The management console runs from `apps/ui` and defaults to
+`http://127.0.0.1:3080/` on the Windows AI host. Public access is routed through
+the existing FRP server on `http://60.205.213.254:2444/`.
+
+Read:
+
+- [Hermes Agent platform design](docs/agent-platform/hermes-agent-platform-design.md)
+- [Hermes Agent deployment guide](docs/agent-platform/deployment-guide.md)
+- [Hermes Agent validation status](docs/agent-platform/validation-status.md)
+
 ## AI Stack Operations
 
 Current AI server deployment notes and helper scripts are documented here:
@@ -92,5 +107,15 @@ Current AI server deployment notes and helper scripts are documented here:
 - [Current AI server deployment](docs/ai-stack/current-deployment.md)
 - [Qwen3.6 GPU rebalance change log](docs/ai-stack/change-log-2026-06-24-qwen36-rebalance.md)
 - [AI stack runbook](docs/ai-stack/runbook.md)
+- [AI Chat Web gateway](docs/ai-stack/ai-chat-web.md)
 
 The AI helper scripts intentionally do not store SSH passwords or API keys. Run them on the AI server after logging in, or use the connection helper to open an interactive session.
+
+The Qwen3.6 LLM service runs internally at `192.168.100.12:8000` and is exposed
+through FRP at `http://60.205.213.254:9000/` when the Windows `frpc` client is
+connected with the `ai-llm-qwen36-9000` proxy registered.
+
+The AI Chat Web UI runs internally at `192.168.100.12:9999` and is exposed
+through FRP at `http://60.205.213.254:9999/` when the Windows `frpc` client is
+connected with the `ai-chat-web-9999` proxy registered. Port `9000` remains the
+OpenAI-compatible API entrypoint.
